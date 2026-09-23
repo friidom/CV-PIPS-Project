@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Local videos / data (never commit contest footage)
+*.mp4
+*.MP4
+*.avi
+*.mov
+*.mkv
+samples/
+data/
+
+# Model weights (ship via weights/download.sh; un-ignore a file with !path if needed)
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# Harness output
+/predictions.json
