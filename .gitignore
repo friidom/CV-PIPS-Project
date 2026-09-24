@@ -25,3 +25,14 @@ data/
 
 # Harness output
 /predictions.json
+# local data and caches (sample videos are not redistributed)
+cache/
+samples/
+*.mp4
+*.MP4
+!docs/**/*.mp4
+__pycache__/
+*.pyc
+.venv*/
+predictions.json
+runs/

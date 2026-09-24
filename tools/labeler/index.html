@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event Labeler</title>
+<style>
+  :root {
+    --bg: #111418; --panel: #1a1f26; --line: #2a313b; --text: #e6e9ee; --muted: #8b95a3;
+    --accent: #4da3ff; --warn: #ffb020; --bad: #ff5d5d; --ok: #3ecf8e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  label.btn, button { background: #243040; color: var(--text); border: 1px solid #34465c; border-radius: 6px; padding: 5px 10px; cursor: pointer; font: inherit; }
+  label.btn:hover, button:hover { background: #2d3c50; }
+  button.primary { background: #1f5fa8; border-color: #2c74c7; }
+  button.danger { background: #5a2226; border-color: #7a2e33; }
+  input[type=file] { display: none; }
+  input[type=text], select { background: #0e1115; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 0; height: calc(100vh - 49px); }
+  #left { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); }
+  #videoWrap { position: relative; background: #000; flex: 1 1 auto; min-height: 200px; display: flex; align-items: center; justify-content: center; }
+  video { max-width: 100%; max-height: 100%; }
+  #hud { position: absolute; left: 8px; top: 8px; background: rgba(0,0,0,.65); padding: 4px 8px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+  #drop { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 16px; pointer-events: none; }
+  #bar { padding: 6px 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border-top: 1px solid var(--line); background: var(--panel); }
+  #draft { font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  canvas { display: block; width: 100%; background: #0c0f13; cursor: pointer; }
+  #right { display: flex; flex-direction: column; min-height: 0; }
+  #tabs { display: flex; border-bottom: 1px solid var(--line); }
+  #tabs button { flex: 1; border: 0; border-radius: 0; background: transparent; padding: 8px; }
+  #tabs button.active { background: var(--panel); border-bottom: 2px solid var(--accent); }
+  .tab { display: none; overflow: auto; flex: 1; min-height: 0; }
+  .tab.active { display: block; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  tr.sel td { background: #1d2a3a; }
+  tr.warn td:first-child { box-shadow: inset 3px 0 var(--warn); }
+  td.note { white-space: normal; color: var(--muted); max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  .small { color: var(--muted); font-size: 12px; }
+  #help { padding: 10px 12px; }
+  #help kbd { background: #243040; border: 1px solid #34465c; border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, monospace; }
+  #help dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
+  #help dt { white-space: nowrap; }
+  .def { padding: 6px 12px; border-bottom: 1px solid var(--line); }
+  .def b { display: block; }
+  #status { margin-left: auto; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Event Labeler</h1>
+  <label class="btn">Open video<input type="file" id="fVideo" accept="video/*"></label>
+  <span>key <input type="text" id="vKey" size="12" title="Video key used in the JSON (original file name, e.g. C3896.MP4)"></span>
+  <label class="btn">Import labels<input type="file" id="fLabels" accept=".json"></label>
+  <label class="btn">Load predictions<input type="file" id="fPred" accept=".json"></label>
+  <button class="primary" id="bExport" title="Ground-truth JSON for evaluate.py --gt">Export GT JSON</button>
+  <button id="bBackup" title="Everything incl. notes and review flags">Backup</button>
+  <span id="status"></span>
+</header>
+<main>
+  <section id="left">
+    <div id="videoWrap">
+      <video id="video" preload="auto"></video>
+      <div id="drop">Open a video (a 720p/1080p proxy plays smoothly; 4K originals may stutter)</div>
+      <div id="hud"></div>
+    </div>
+    <div id="bar">
+      <select id="cls"></select>
+      <span id="draft"></span>
+      <button id="bAdd" class="primary">Save event ⏎</button>
+      <button id="bCancel">Clear Esc</button>
+      <span class="small" id="rate"></span>
+    </div>
+    <canvas id="zoom" height="170"></canvas>
+    <canvas id="overview" height="104"></canvas>
+  </section>
+  <section id="right">
+    <div id="tabs">
+      <button data-tab="tEvents" class="active">Events</button>
+      <button data-tab="tPred">Predictions</button>
+      <button data-tab="tDefs">Classes</button>
+      <button data-tab="tHelp">Keys</button>
+    </div>
+    <div class="tab active" id="tEvents"><table><thead><tr><th>class</th><th>start</th><th>end</th><th>dur</th><th>note</th><th></th></tr></thead><tbody id="evBody"></tbody></table></div>
+    <div class="tab" id="tPred"><table><thead><tr><th>class</th><th>start</th><th>end</th><th>match</th><th></th></tr></thead><tbody id="prBody"></tbody></table></div>
+    <div class="tab" id="tDefs"></div>
+    <div class="tab" id="tHelp"><div id="help">
+      <dl>
+        <dt><kbd>Space</kbd></dt><dd>play / pause</dd>
+        <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>±1 frame</dd>
+        <dt><kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd></dt><dd>±1 s</dd>
+        <dt><kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd></dt><dd>±5 s</dd>
+        <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>playback speed</dd>
+        <dt><kbd>I</kbd> or <kbd>[</kbd></dt><dd>set start = now</dd>
+        <dt><kbd>O</kbd> or <kbd>]</kbd></dt><dd>set end = now</dd>
+        <dt><kbd>1</kbd>…<kbd>0</kbd>, <kbd>Q</kbd> <kbd>W</kbd> <kbd>E</kbd> <kbd>R</kbd></dt><dd>choose class (order of the Classes tab)</dd>
+        <dt><kbd>Enter</kbd></dt><dd>save draft (new event, or update the selected one)</dd>
+        <dt><kbd>Esc</kbd></dt><dd>clear draft / deselect</dd>
+        <dt><kbd>Del</kbd></dt><dd>delete selected event</dd>
+        <dt><kbd>N</kbd></dt><dd>edit note of selected event</dd>
+      </dl>
+      <p class="small">Click an event row to select it: the draft takes its values, adjust with I/O and press Enter to update. Clicking a timeline seeks. Labels autosave in this browser (per video key); use Export to share. Same-class events must not overlap — overlapping rows get an orange mark (the official GT merges them into one segment).</p>
+      <p class="small">Conventions follow the task PDF: start/end definitions are listed in the Classes tab. End an event at the video duration if it runs past the end.</p>
+    </div></div>
+  </section>
+</main>
+<script>
+"use strict";
+const CLASSES = [
+  ["accident", "Collision: contact between road users or with a fixed object", "first frame where contact is visible", "all involved objects stop moving or leave the frame", "#ff4d4f"],
+  ["near_miss", "Sharp braking or swerving to avoid a collision; no contact", "onset of the evasive action", "road users are clear of each other", "#ff9c6e"],
+  ["red_light", "A vehicle crosses the stop line while its signal is red", "front of the vehicle crosses the stop line", "vehicle leaves the intersection or the frame", "#f5222d"],
+  ["wrong_way", "Vehicle moves against the traffic direction of its lane / in the oncoming lane", "vehicle enters the opposing lane", "returns to a correct lane or leaves the frame", "#eb2f96"],
+  ["illegal_u_turn", "U-turn where markings or signs prohibit it", "vehicle starts turning", "vehicle completes the turn", "#9254de"],
+  ["stopped_vehicle", "Vehicle stationary on the carriageway >= 10 s, not in a queue at a signal", "vehicle stops", "vehicle moves again or is removed", "#fadb14"],
+  ["jaywalking", "Pedestrian on the carriageway outside a crossing", "pedestrian steps onto the road", "pedestrian leaves the road", "#36cfc9"],
+  ["failure_to_yield", "Vehicle drives through a crossing while a pedestrian is on it or stepping onto it", "vehicle enters the crossing", "vehicle leaves the crossing", "#40a9ff"],
+  ["illegal_turn", "Turn from the wrong lane or in a prohibited direction", "vehicle starts turning", "vehicle completes the turn", "#597ef7"],
+  ["solid_line_crossing", "Lane change or manoeuvre across a solid marking", "wheel crosses the line", "vehicle is fully in the new lane", "#73d13d"],
+  ["stop_line", "Vehicle stops past the stop line on red without entering the intersection", "vehicle stops", "signal turns green", "#ffc53d"],
+  ["congestion", "Standstill or crawling traffic across all lanes of a direction", "queue stops moving", "queue clears", "#d48806"],
+  ["road_obstacle", "Debris, animal or fallen object on the carriageway", "obstacle appears", "obstacle is removed", "#8c8c8c"],
+  ["fire_smoke", "Visible fire or smoke from a vehicle or on the road", "first visible smoke", "smoke clears or the frame ends", "#ff7a45"],
+];
+const KEYS = ["1","2","3","4","5","6","7","8","9","0","q","w","e","r"];
+const NAMES = CLASSES.map(c => c[0]);
+const COLOR = Object.fromEntries(CLASSES.map(c => [c[0], c[4]]));
+const FPS = 30000 / 1001;
+const RATES = [0.25, 0.5, 1, 1.5, 2, 3, 4, 8];
+const STORE = "wiut-labeler-v1";
+
+const $ = id => document.getElementById(id);
+const video = $("video");
+let state = loadState();          // {videos: {key: {duration, fps, events: [{s,e,label,note}]}}}
+let pred = {};                    // {key: [[s,e,label], ...]}
+let key = "";
+let draft = { s: null, e: null, label: NAMES[6] };
+let selected = -1;                // index into current events
+let rateIdx = 2;
+
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(STORE)) || { videos: {} }; } catch { return { videos: {} }; }
+}
+function saveState() {
+  try { localStorage.setItem(STORE, JSON.stringify(state)); setStatus("saved " + new Date().toLocaleTimeString()); }
+  catch (err) { setStatus("autosave failed: " + err.message); }
+}
+function setStatus(msg) { $("status").textContent = msg; }
+function cur() {
+  if (!key) return null;
+  if (!state.videos[key]) state.videos[key] = { duration: video.duration || 0, fps: FPS, events: [] };
+  return state.videos[key];
+}
+function fmt(t) { return t == null ? "—" : t.toFixed(2); }
+function frameOf(t) { return Math.round(t * FPS); }
+function guessKey(name) {
+  const m = name.match(/^(C\d{3,5})/i);
+  return m ? m[1].toUpperCase() + ".MP4" : name;
+}
+
+// ---------- class selector / definitions ----------
+for (const [i, c] of CLASSES.entries()) {
+  const o = document.createElement("option"); o.value = c[0]; o.textContent = `${KEYS[i].toUpperCase()} · ${c[0]}`; $("cls").appendChild(o);
+  const d = document.createElement("div"); d.className = "def";
+  d.innerHTML = `<b><span class="swatch" style="background:${c[4]}"></span>${KEYS[i].toUpperCase()} · ${c[0]}</b>${c[1]}<br><span class="small">start: ${c[2]} · end: ${c[3]}</span>`;
+  $("tDefs").appendChild(d);
+}
+$("cls").value = draft.label;
+$("cls").addEventListener("change", () => { draft.label = $("cls").value; $("cls").blur(); render(); });
+
+// ---------- file loading ----------
+$("fVideo").addEventListener("change", ev => {
+  const f = ev.target.files[0]; if (!f) return;
+  video.src = URL.createObjectURL(f);
+  key = guessKey(f.name); $("vKey").value = key;
+  $("drop").style.display = "none"; selected = -1; clearDraft();
+});
+$("vKey").addEventListener("change", () => { key = $("vKey").value.trim(); selected = -1; render(); });
+video.addEventListener("loadedmetadata", () => { const v = cur(); if (v) { v.duration = +video.duration.toFixed(3); saveState(); } render(); });
+video.addEventListener("timeupdate", render);
+video.addEventListener("seeked", render);
+
+$("fLabels").addEventListener("change", async ev => {
+  const f = ev.target.files[0]; if (!f) return;
+  const data = JSON.parse(await f.text());
+  // backup / predictions files wrap videos in {"videos": {...}}; ground-truth files are {key: {...}} directly
+  const vids = data.videos && typeof data.videos === "object" && !Array.isArray(data.videos) ? data.videos : data;
+  let n = 0;
+  for (const [k, v] of Object.entries(vids)) {
+    if (!v || !Array.isArray(v.events)) continue;
+    const evs = v.events.map(e => Array.isArray(e) ? { s: +e[0], e: +e[1], label: e[2], note: "" } : { s: +e.s, e: +e.e, label: e.label, note: e.note || "" });
+    const existing = state.videos[k];
+    if (existing && existing.events.length && !confirm(`${k}: replace ${existing.events.length} local events with ${evs.length} imported ones?\n(Cancel = keep local and append imported)`)) {
+      existing.events.push(...evs);
+    } else {
+      state.videos[k] = { duration: v.duration || existing?.duration || 0, fps: v.fps || FPS, events: evs };
+    }
+    n += evs.length;
+  }
+  saveState(); render(); setStatus(`imported ${n} events`); ev.target.value = "";
+});
+$("fPred").addEventListener("change", async ev => {
+  const f = ev.target.files[0]; if (!f) return;
+  const data = JSON.parse(await f.text());
+  pred = {};
+  for (const [k, v] of Object.entries(data.videos || {})) pred[k] = v.events || [];
+  render(); setStatus(`loaded predictions for ${Object.keys(pred).length} videos`); ev.target.value = "";
+});
+
+function download(name, obj) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 1)], { type: "application/json" }));
+  a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$("bExport").addEventListener("click", () => {
+  const out = {};
+  for (const [k, v] of Object.entries(state.videos)) {
+    const evs = mergeOverlaps(v.events).map(e => [+e.s.toFixed(2), +e.e.toFixed(2), e.label]);
+    out[k] = { duration: v.duration, fps: +(v.fps || FPS).toFixed(3), events: evs };
+  }
+  download("dev_labels.json", out);
+});
+$("bBackup").addEventListener("click", () => download("labels_backup.json", state));
+
+// Same-class overlapping segments are merged, as the official annotations do.
+function mergeOverlaps(events) {
+  const out = [];
+  for (const lab of NAMES) {
+    const xs = events.filter(e => e.label === lab && e.e > e.s).sort((a, b) => a.s - b.s);
+    for (const e of xs) {
+      const last = out.length && out[out.length - 1].label === lab ? out[out.length - 1] : null;
+      if (last && e.s < last.e) last.e = Math.max(last.e, e.e); else out.push({ ...e });
+    }
+  }
+  return out.sort((a, b) => a.s - b.s);
+}
+
+// ---------- draft / events ----------
+function clearDraft() { draft.s = null; draft.e = null; selected = -1; render(); }
+function commit() {
+  const v = cur(); if (!v) return;
+  let { s, e, label } = draft;
+  if (s == null || e == null) { setStatus("set both start (I) and end (O)"); return; }
+  if (e < s) [s, e] = [e, s];
+  if (e - s < 0.04) { setStatus("event is shorter than one frame"); return; }
+  const item = { s: +s.toFixed(3), e: +e.toFixed(3), label, note: selected >= 0 ? v.events[selected].note : "" };
+  if (selected >= 0) v.events[selected] = item; else v.events.push(item);
+  v.events.sort((a, b) => a.s - b.s);
+  saveState(); clearDraft();
+}
+function selectEvent(i) {
+  const v = cur(); if (!v || !v.events[i]) return;
+  selected = i; const ev = v.events[i];
+  draft = { s: ev.s, e: ev.e, label: ev.label }; $("cls").value = ev.label;
+  render();
+}
+function deleteSelected() {
+  const v = cur(); if (!v || selected < 0) return;
+  v.events.splice(selected, 1); saveState(); clearDraft();
+}
+function editNote() {
+  const v = cur(); if (!v || selected < 0) return;
+  const n = prompt("note", v.events[selected].note || ""); if (n === null) return;
+  v.events[selected].note = n; saveState(); render();
+}
+$("bAdd").addEventListener("click", commit);
+$("bCancel").addEventListener("click", clearDraft);
+
+// ---------- keyboard ----------
+function seek(t) { video.currentTime = Math.max(0, Math.min(video.duration || 0, t)); }
+document.addEventListener("keydown", ev => {
+  if (ev.target.tagName === "INPUT" || ev.target.tagName === "SELECT") return;
+  const k = ev.key.toLowerCase();
+  const t = video.currentTime;
+  if (k === " ") { video.paused ? video.play() : video.pause(); }
+  else if (k === "arrowleft" || k === "arrowright") {
+    const d = (k === "arrowleft" ? -1 : 1) * (ev.ctrlKey ? 5 : ev.shiftKey ? 1 : 1 / FPS);
+    video.pause(); seek(t + d);
+  }
+  else if (k === "arrowup" || k === "arrowdown") {
+    rateIdx = Math.max(0, Math.min(RATES.length - 1, rateIdx + (k === "arrowup" ? 1 : -1)));
+    video.playbackRate = RATES[rateIdx];
+  }
+  else if (k === "i" || k === "[") { draft.s = +t.toFixed(3); }
+  else if (k === "o" || k === "]") { draft.e = +t.toFixed(3); }
+  else if (k === "enter") { commit(); }
+  else if (k === "escape") { clearDraft(); }
+  else if (k === "delete" || k === "backspace") { deleteSelected(); }
+  else if (k === "n") { editNote(); }
+  else if (KEYS.includes(k)) { draft.label = NAMES[KEYS.indexOf(k)]; $("cls").value = draft.label; }
+  else return;
+  ev.preventDefault(); render();
+});
+
+// ---------- tabs ----------
+for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => {
+  document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("active", x === b));
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x.id === b.dataset.tab));
+});
+
+// ---------- rendering ----------
+function tiou(a, b) {
+  const inter = Math.max(0, Math.min(a[1], b[1]) - Math.max(a[0], b[0]));
+  const union = (a[1] - a[0]) + (b[1] - b[0]) - inter;
+  return union > 0 ? inter / union : 0;
+}
+function overlapFlags(events) {
+  return events.map((e, i) => events.some((o, j) => j !== i && o.label === e.label && o.s < e.e && e.s < o.e));
+}
+function drawLanes(cv, t0, t1, laneH, events, preds, withTicks) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.height / (cv._dpr || 1);
+  if (cv._w !== w || cv._dpr !== dpr) { cv._w = w; cv.height = h * dpr; cv.width = w * dpr; cv._dpr = dpr; }
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const x = t => (t - t0) / (t1 - t0) * w;
+  const top = withTicks ? 14 : 2;
+  for (let i = 0; i < NAMES.length; i++) {
+    g.fillStyle = i % 2 ? "#10141a" : "#0c0f13"; g.fillRect(0, top + i * laneH, w, laneH);
+  }
+  if (withTicks) {
+    g.fillStyle = "#8b95a3"; g.font = "10px system-ui"; g.strokeStyle = "#2a313b";
+    const span = t1 - t0, step = span > 120 ? 10 : span > 40 ? 5 : 1;
+    for (let s = Math.ceil(t0 / step) * step; s <= t1; s += step) {
+      g.beginPath(); g.moveTo(x(s), 10); g.lineTo(x(s), h); g.stroke(); g.fillText(s.toFixed(0), x(s) + 2, 9);
+    }
+  }
+  for (const [s, e, lab] of preds) {
+    const i = NAMES.indexOf(lab); if (i < 0) continue;
+    g.strokeStyle = COLOR[lab]; g.setLineDash([3, 2]); g.lineWidth = 1.5;
+    g.strokeRect(x(s), top + i * laneH + 1, Math.max(2, x(e) - x(s)), laneH - 2); g.setLineDash([]);
+  }
+  events.forEach((ev, idx) => {
+    const i = NAMES.indexOf(ev.label); if (i < 0) return;
+    g.fillStyle = COLOR[ev.label]; g.globalAlpha = idx === selected ? 1 : 0.75;
+    g.fillRect(x(ev.s), top + i * laneH + 2, Math.max(2, x(ev.e) - x(ev.s)), laneH - 4); g.globalAlpha = 1;
+    if (idx === selected) { g.strokeStyle = "#fff"; g.lineWidth = 1.5; g.strokeRect(x(ev.s), top + i * laneH + 1, Math.max(2, x(ev.e) - x(ev.s)), laneH - 2); }
+  });
+  if (draft.s != null) {
+    const i = NAMES.indexOf(draft.label), e = draft.e ?? video.currentTime;
+    g.fillStyle = "rgba(255,255,255,.35)"; g.fillRect(x(Math.min(draft.s, e)), top + i * laneH, Math.abs(x(e) - x(draft.s)), laneH);
+  }
+  g.strokeStyle = "#fff"; g.lineWidth = 1; g.beginPath(); g.moveTo(x(video.currentTime), 0); g.lineTo(x(video.currentTime), h); g.stroke();
+  cv._t0 = t0; cv._t1 = t1;
+}
+for (const id of ["zoom", "overview"]) $(id).addEventListener("click", ev => {
+  const cv = $(id), r = cv.getBoundingClientRect();
+  seek(cv._t0 + (ev.clientX - r.left) / r.width * (cv._t1 - cv._t0));
+});
+
+let raf = 0;
+function render() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; renderNow(); }); }
+function renderNow() {
+  const v = cur(), t = video.currentTime || 0, D = video.duration || v?.duration || 1;
+  const events = v ? v.events : [], preds = pred[key] || [];
+  $("hud").textContent = `${key || "no video"}  t=${t.toFixed(2)}s  frame ${frameOf(t)}  ×${video.playbackRate}`;
+  const c = COLOR[draft.label];
+  $("draft").innerHTML = `<span class="pill" style="background:${c};color:#111">${draft.label}</span> start ${fmt(draft.s)} · end ${fmt(draft.e)}` + (selected >= 0 ? ` <span class="small">(editing #${selected + 1})</span>` : "");
+  $("rate").textContent = `speed ×${RATES[rateIdx]}`;
+  drawLanes($("zoom"), t - 15, t + 15, 11, events, preds, true);
+  drawLanes($("overview"), 0, D, 7, events, preds, false);
+
+  const flags = overlapFlags(events);
+  $("evBody").innerHTML = events.map((e, i) => `<tr data-i="${i}" class="${i === selected ? "sel" : ""} ${flags[i] ? "warn" : ""}">
+    <td><span class="swatch" style="background:${COLOR[e.label]}"></span>${e.label}</td><td>${fmt(e.s)}</td><td>${fmt(e.e)}</td><td>${(e.e - e.s).toFixed(1)}</td>
+    <td class="note" title="${(e.note || "").replace(/"/g, "&quot;")}">${e.note || ""}</td><td><button data-go="${e.s}">▶</button></td></tr>`).join("");
+  $("prBody").innerHTML = preds.map((p, i) => {
+    const best = Math.max(0, ...events.filter(e => e.label === p[2]).map(e => tiou([e.s, e.e], p)));
+    return `<tr><td><span class="swatch" style="background:${COLOR[p[2]]}"></span>${p[2]}</td><td>${fmt(p[0])}</td><td>${fmt(p[1])}</td>
+      <td style="color:${best >= 0.5 ? "var(--ok)" : best > 0 ? "var(--warn)" : "var(--muted)"}">${best.toFixed(2)}</td>
+      <td><button data-go="${p[0]}">▶</button> <button data-accept="${i}" title="copy into labels">+</button></td></tr>`;
+  }).join("");
+}
+$("evBody").addEventListener("click", ev => {
+  const go = ev.target.dataset.go; if (go !== undefined) { seek(+go); return; }
+  const tr = ev.target.closest("tr"); if (tr) selectEvent(+tr.dataset.i);
+});
+$("prBody").addEventListener("click", ev => {
+  const go = ev.target.dataset.go; if (go !== undefined) { seek(+go); return; }
+  const a = ev.target.dataset.accept; if (a === undefined) return;
+  const p = pred[key][+a], v = cur(); if (!v) return;
+  v.events.push({ s: p[0], e: p[1], label: p[2], note: "from model" }); v.events.sort((x, y) => x.s - y.s); saveState(); render();
+});
+window.addEventListener("resize", render);
+// keep keyboard shortcuts working after a click: Space must not re-press the focused button
+document.addEventListener("click", ev => { if (ev.target.tagName === "BUTTON") ev.target.blur(); });
+render();
+</script>
+</body>
+</html>
