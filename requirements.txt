@@ -1,2 +1,14 @@
+# Runtime dependencies for the two official commands:
+#   pip install -r requirements.txt
+#   python run_submission.py --videos /data/test --out predictions.json
+#
+# torch/torchvision must match the evaluation machine's CUDA build. The wheels
+# used during development were installed from the cu128 index:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+# CPU-only wheels work too; inference is then several times slower.
 numpy>=1.24
 opencv-python-headless>=4.8
+torch>=2.2
+torchvision>=0.17
+av>=12.0                 # sampled H.264 decoding (skip_frame=NONREF)
+scipy>=1.11              # linear_sum_assignment in the tracker

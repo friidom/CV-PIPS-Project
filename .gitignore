@@ -8,31 +8,31 @@ venv/
 # macOS
 .DS_Store
 
-# Local videos / data (never commit contest footage)
+# Contest footage is never redistributed: keep the originals and any proxies of
+# them out of git, but DO ship the small rendered clips the website serves.
 *.mp4
 *.MP4
 *.avi
 *.mov
 *.mkv
-samples/
-data/
+/samples/
+/data/
+/cache/
+/runs/
+!web/public/media/**/*.mp4
+!web/public/media/**/*.jpg
 
-# Model weights (ship via weights/download.sh; un-ignore a file with !path if needed)
+# Model weights other than the TorchScript graphs committed in weights/
 *.pt
 *.pth
 *.onnx
 *.engine
 
-# Harness output
+# Harness output (predictions_samples.json IS committed — the task asks for it)
 /predictions.json
-# local data and caches (sample videos are not redistributed)
-cache/
-samples/
-*.mp4
-*.MP4
-!docs/**/*.mp4
-__pycache__/
-*.pyc
-.venv*/
-predictions.json
-runs/
+
+# Website
+web/node_modules/
+web/dist/
+web/.vite/
+server/.jobs/

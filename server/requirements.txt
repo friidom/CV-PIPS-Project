@@ -1,0 +1,7 @@
+# Live-demo backend only. The submission's requirements.txt stays minimal;
+# the organizers never run this server.
+-r ../requirements.txt
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+imageio-ffmpeg>=0.5        # bundles the ffmpeg used to make browser-playable copies
