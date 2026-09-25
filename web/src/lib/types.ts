@@ -1,10 +1,15 @@
 /** Shapes written by scripts/build_site_data.py and served by server/app.py. */
 
+import type { OverlayData } from "./overlay";
+
 /** The official Part A output shape: [start_sec, end_sec, label]. */
 export type EventTuple = [number, number, string];
 
 /** One [t_sec, score] pair of the Part B risk curve. */
 export type RiskPoint = [number, number];
+
+/** The three cues behind each recorded score: [t_sec, conflict, red runner, braking]. */
+export type RiskCues = [number, number, number, number][];
 
 export interface VideoMeta {
   name: string;
@@ -125,6 +130,39 @@ export interface PhaseSeries {
   cycle_periods: number[];
 }
 
+/** One configuration of tools/ablation.py; every number is measured, none is accuracy. */
+export interface AblationRun {
+  id: string;
+  detector: string;
+  /** Every `step`-th frame goes to the detector. */
+  step: number;
+  fps: number;
+  tracking: boolean;
+  frames: number;
+  detections: number;
+  tracks: number;
+  trajectories: number;
+  events: EventTuple[];
+  by_class: Record<string, number>;
+  seconds: { perception: number; tracking: number; rules: number; total: number };
+  inliers: number;
+  /** Baseline events this run reproduces (same class, greedy tIoU >= match_iou). */
+  shared_with_baseline: number;
+  shared_with_submission: number | null;
+  perception_shared_with?: string;
+}
+
+export interface AblationData {
+  generated_at: string;
+  command: string;
+  machine: { cpu: string; device: string; torch: string; threads: number };
+  input: { video: string; clip: string; seconds: number; fps: number; width: number; height: number };
+  baseline: string;
+  match_iou: number;
+  submission: { events: EventTuple[]; by_class: Record<string, number> } | null;
+  runs: AblationRun[];
+}
+
 /* ---------- live demo ---------- */
 
 export type JobStage =
@@ -154,7 +192,11 @@ export interface JobResult extends JobProgress {
   meta: VideoMeta;
   events: EventTuple[];
   risk: RiskPoint[];
+  /** [t, conflict, red runner, braking] on the same frames as `risk` (server/inference.py CueRecorder). */
+  risk_cues?: RiskCues;
   alignment: Alignment;
+  /** Same build_overlay() contract as the samples; null when nothing was tracked. */
+  overlay: OverlayData | null;
   timings: { part_a_sec: number; part_b_sec: number; total_sec: number };
   media: { playback: string };
   device: string;

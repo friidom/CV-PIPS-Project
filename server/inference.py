@@ -32,6 +32,8 @@ from traffic.perception import DETECT_SIZE, Detections, parallel_frames  # noqa:
 from traffic.events.context import EventContext  # noqa: E402
 
 from solution import CLASSES  # noqa: E402
+# The one producer of the overlay contract the sample pages already draw.
+from scripts.build_site_data import build_overlay  # noqa: E402
 
 PROXY_WIDTH = 1280
 RISK_STRIDE = 5          # traffic.risk processes every 5th frame; match it for the preview curve
@@ -40,6 +42,21 @@ DETECT_BATCH = 16
 
 # Rough share of the wall clock each stage takes, for a progress bar that does not stall.
 WEIGHTS = {"perception": 0.52, "tracking": 0.06, "rules": 0.04, "risk": 0.30, "encoding": 0.08}
+
+
+class CueRecorder(RiskModel):
+    """RiskModel that also keeps the three cues behind each processed frame's score.
+
+    Pass-through only: `_cues` returns exactly what RiskModel computed, so the score
+    is unchanged; the demo can just show which cue - conflict, red runner or braking -
+    raised it. The sample runs went through the harness, which records the score alone.
+    """
+
+    last_cues: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    def _cues(self, tracked, t, phase):
+        self.last_cues = super()._cues(tracked, t, phase)
+        return self.last_cues
 
 
 class Engine:
@@ -156,13 +173,14 @@ def run_job(job, on_progress) -> dict:
         scene=eng.scene,
         masks=eng.masks,
     )
-    events = detect_all(ctx, CLASSES)
+    found: dict[str, list] = {}  # which tracks each rule fired on; does not change the events
+    events = detect_all(ctx, CLASSES, evidence=found)
     part_a_sec = time.perf_counter() - t_start
     done.append("rules")
 
     # --- Part B: causal, frame by frame ----------------------------------------
     t_b = time.perf_counter()
-    risk_model = RiskModel(eng.risk_detector, eng.scene, eng.masks.road)
+    risk_model = CueRecorder(eng.risk_detector, eng.scene, eng.masks.road)
     risk_model.reset(
         {
             "video_id": job.filename,
@@ -173,6 +191,7 @@ def run_job(job, on_progress) -> dict:
         }
     )
     risk: list[list[float]] = []
+    cues: list[list[float]] = []  # [t, conflict, red runner, braking] on the same frames as `risk`
     cap = cv2.VideoCapture(str(job.path))
     i = 0
     while True:
@@ -184,8 +203,9 @@ def run_job(job, on_progress) -> dict:
             break
         t_sec = i / info.fps
         score = float(risk_model.step(frame, t_sec))
-        if i % RISK_STRIDE == 0:
+        if i % RISK_STRIDE == 0:  # RiskModel processes exactly these frames (stride 5), so the cues are fresh
             risk.append([round(t_sec, 3), round(score, 4)])
+            cues.append([round(t_sec, 3), *(round(float(c), 4) for c in risk_model.last_cues)])
         i += 1
         if i % 150 == 0:
             on_progress("risk", i / max(info.n_frames, 1), f"Risk estimated for {i:,} frames")
@@ -194,6 +214,21 @@ def run_job(job, on_progress) -> dict:
     done.append("risk")
 
     on_progress("encoding", 0.3, "Preparing the playback copy")
+    aligned = inliers >= 40
+    # Lamp windows are scene.json positions mapped through H; unaligned, they sample
+    # arbitrary pixels, so the overlay reports the phase as unknown rather than guess.
+    keep = slice(None) if aligned else slice(0)
+    overlay = build_overlay(
+        job.filename,
+        {"fps": info.fps, "H": H, "lamp_frames": lamp_frames[keep], "lamp_scores": lamp_scores[keep]},
+        0.0, info.duration + 1.0, events, "video",
+        [(e.start, e.end, label, e.tids) for label, items in found.items() for e in items],
+        table=table,
+        # Boxes are in the DETECT_SIZE decode frame scaled by width / 1920 (detector.py).
+        frame=(info.width, info.width * DETECT_SIZE[1] / DETECT_SIZE[0]),
+    )
+    if overlay is not None:
+        overlay["source"] = "this upload's perception pass"
     playback = _playback_copy(job, info)
 
     return {
@@ -207,7 +242,9 @@ def run_job(job, on_progress) -> dict:
         },
         "events": events,
         "risk": risk,
-        "alignment": {"inliers": int(inliers), "aligned": bool(inliers >= 40)},
+        "risk_cues": cues,
+        "alignment": {"inliers": int(inliers), "aligned": bool(aligned)},
+        "overlay": overlay,
         "timings": {
             "part_a_sec": round(part_a_sec, 2),
             "part_b_sec": round(part_b_sec, 2),

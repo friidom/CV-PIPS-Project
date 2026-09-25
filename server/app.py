@@ -9,6 +9,7 @@ Endpoints
     GET  /api/jobs/{id}/stream    the same payload as server-sent events
     GET  /api/jobs/{id}/media     the browser-playable copy, with range support
     DELETE /api/jobs/{id}         cancel
+    POST /api/live/{session}      one JPEG frame of a live feed -> tracked boxes (server/live.py)
 
 It also serves web/dist when that build exists, so the site and the API can run as
 one origin on a single host.
@@ -18,10 +19,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,11 +32,12 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from server import inference  # noqa: E402
+from server import inference, live  # noqa: E402
 from server.jobs import store  # noqa: E402
 
 MAX_UPLOAD_BYTES = int(os.environ.get("DEMO_MAX_UPLOAD_MB", "200")) * 1024 * 1024
 MAX_DURATION_SEC = float(os.environ.get("DEMO_MAX_DURATION_SEC", "120"))
+LIVE_MAX_BYTES = 2 * 1024 * 1024
 CHUNK = 1024 * 1024
 
 app = FastAPI(title="WIUT CV Track — traffic event demo", docs_url=None, redoc_url=None)
@@ -177,6 +181,28 @@ async def job_media(jid: str) -> FileResponse:
         raise HTTPException(404, "No playable copy for this job.")
     # FileResponse handles Range requests, which the <video> element needs to seek.
     return FileResponse(path, media_type="video/mp4", filename=f"{job.id}.mp4")
+
+
+@app.post("/api/live/{session}")
+async def live_frame(session: str, request: Request) -> dict:
+    """One frame of a live feed (JPEG body) -> tracked boxes. Uploads always come first."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", session):
+        raise HTTPException(400, "Bad session id.")
+    if store.busy():
+        raise HTTPException(503, "An upload is being analysed; live mode resumes when it finishes.")
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > LIVE_MAX_BYTES:
+            raise HTTPException(413, "Send one JPEG frame of at most 2 MB.")
+    if not body:
+        raise HTTPException(400, "Empty frame.")
+    try:
+        return await run_in_threadpool(live.step, session, bytes(body))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    except OverflowError as exc:
+        raise HTTPException(503, f"{exc}; try again in a minute.") from None
 
 
 DIST = ROOT / "web" / "dist"

@@ -259,8 +259,9 @@ export default function Report() {
               solid_line_crossing, which are geometry problems we simply have not drawn yet.
             </li>
             <li>
-              <b>Ablations with numbers</b> &mdash; detector size, frame stride, with and without
-              tracking &mdash; which only become meaningful once there is a labelled dev set.
+              <b>Accuracy ablations.</b> Detector size, frame stride and tracking are already ablated
+              for cost and agreement (<span className="num">tools/ablation.py</span>, on the Extra credit
+              page); which configuration is <em>more accurate</em> needs the labelled dev set first.
             </li>
           </ol>
         </Block>

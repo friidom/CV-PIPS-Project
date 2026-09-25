@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { byClassOrder, classColor, classLabel } from "../lib/classes";
+import { pad3, regionLabel, type EventFact } from "../lib/events";
 import { timecode } from "../lib/format";
 import {
   boxesAt,
@@ -11,7 +12,7 @@ import {
   trailsAt,
   type OverlayData,
 } from "../lib/overlay";
-import { usePlayback } from "../lib/playback";
+import { useGliding, usePlayback } from "../lib/playback";
 import type { Alignment, EventTuple } from "../lib/types";
 
 const RATES = [0.25, 0.5, 1, 1.5, 2, 4];
@@ -27,6 +28,8 @@ interface Props {
   /** Real tracker output for this clip; enables the analysis overlay. */
   overlay?: OverlayData | null;
   alignment?: Alignment | null;
+  /** Evidence per event, same order as `events`, for the jump notice. */
+  facts?: EventFact[] | null;
 }
 
 /** Where the picture actually sits inside the element under object-contain. */
@@ -60,13 +63,18 @@ export function VideoStage({
   fps = 29.97,
   overlay,
   alignment,
+  facts,
 }: Props) {
   const ref = useRef<HTMLVideoElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
-  const { registerVideo, currentTime, duration, setDuration, playing, togglePlay, seek } =
+  const { registerVideo, currentTime, duration, setDuration, playing, togglePlay, seek, selected, select, jump } =
     usePlayback();
+  const gliding = useGliding();
+  // The draw loop runs outside React; it reads the picked event from here.
+  const pickRef = useRef<EventTuple | null>(null);
+  pickRef.current = selected !== null ? (events[selected] ?? null) : null;
 
   const [rate, setRate] = useState(1);
   const [failed, setFailed] = useState(false);
@@ -153,6 +161,10 @@ export function VideoStage({
       }
 
       ctx.font = '600 10px ui-monospace, "JetBrains Mono", monospace';
+      // Same-class segments never overlap (a task rule), so inside the picked
+      // event's span, its label on a box means that box is its evidence.
+      const pick = pickRef.current;
+      const pickLabel = pick && video.currentTime >= pick[0] && video.currentTime <= pick[1] ? pick[2] : null;
       for (const b of boxes) {
         const bw = Math.max(5, b.w * r.w);
         const bh = Math.max(5, b.h * r.h);
@@ -161,9 +173,15 @@ export function VideoStage({
         // Evidence.tids from the event rules wins over the tracker group, so a
         // red-light runner reads red here exactly as it does in the offline render.
         const col = b.ev ? classColor(b.ev) : (colors.g[b.g] ?? colors.cyan);
+        const picked = pickLabel !== null && b.ev === pickLabel;
+        if (picked) {
+          ctx.globalAlpha = 0.16;
+          ctx.fillStyle = col;
+          ctx.fillRect(x, y, bw, bh);
+        }
         ctx.globalAlpha = b.ev ? 1 : 0.9;
         ctx.strokeStyle = col;
-        ctx.lineWidth = b.ev ? 2.4 : 1.2;
+        ctx.lineWidth = picked ? 3.2 : b.ev ? 2.4 : 1.2;
         const k = Math.min(bw, bh) * 0.28;
         ctx.beginPath();
         ctx.moveTo(x, y + k);
@@ -182,7 +200,7 @@ export function VideoStage({
         if (b.ev) {
           ctx.globalAlpha = 1;
           ctx.fillStyle = col;
-          ctx.fillText(`${String(b.id).padStart(3, "0")} ${classLabel(b.ev)}`, x, y - 4);
+          ctx.fillText(`${picked ? "▸ " : ""}${String(b.id).padStart(3, "0")} ${classLabel(b.ev)}`, x, y - 4);
         } else if (bw > 30 && bh > 18) {
           ctx.globalAlpha = 0.85;
           ctx.fillStyle = col;
@@ -221,6 +239,16 @@ export function VideoStage({
     }
   }, []);
 
+  // Step through events by start time, the way an operator reviews a shift.
+  const stepEvent = (dir: 1 | -1) => {
+    const order = events.map((e, i) => ({ s: e[0], i })).sort((a, b) => a.s - b.s);
+    const hit =
+      dir > 0
+        ? order.find((o) => o.s > currentTime + 0.05)
+        : [...order].reverse().find((o) => o.s < currentTime - 0.5);
+    if (hit) select(hit.i, hit.s);
+  };
+
   const onKey = (e: React.KeyboardEvent) => {
     const step = e.shiftKey ? 10 : 5;
     const keys: Record<string, () => void> = {
@@ -233,6 +261,8 @@ export function VideoStage({
       m: () => setMuted((v) => !v),
       f: () => void toggleFull(),
       o: () => setShowOverlay((v) => !v),
+      n: () => stepEvent(1),
+      p: () => stepEvent(-1),
     };
     const fn = keys[e.key];
     if (fn) {
@@ -280,6 +310,10 @@ export function VideoStage({
             className="pointer-events-none absolute inset-0 h-full w-full"
             aria-hidden="true"
           />
+        )}
+
+        {jump?.index != null && events[jump.index] && (
+          <JumpNotice key={jump.id} event={events[jump.index]} fact={facts?.[jump.index]} />
         )}
 
         <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-start gap-1.5 p-2.5">
@@ -388,9 +422,8 @@ export function VideoStage({
           <div className="flex flex-col gap-[2px]">
             {lanes.map((cls) => (
               <div key={cls} className="relative h-[3px] w-full rounded-sm bg-panel2">
-                {events
-                  .filter((e) => e[2] === cls)
-                  .map((e, i) => (
+                {events.map((e, i) =>
+                  e[2] !== cls ? null : (
                     <span
                       key={i}
                       className="absolute inset-y-0 rounded-sm"
@@ -398,21 +431,31 @@ export function VideoStage({
                         left: `${(e[0] / (duration || 1)) * 100}%`,
                         width: `${Math.max(0.35, ((e[1] - e[0]) / (duration || 1)) * 100)}%`,
                         background: classColor(cls),
-                        opacity: currentTime >= e[0] && currentTime <= e[1] ? 1 : 0.55,
+                        opacity:
+                          selected === i || (currentTime >= e[0] && currentTime <= e[1])
+                            ? 1
+                            : selected === null
+                              ? 0.55
+                              : 0.3,
+                        boxShadow: selected === i ? "0 0 0 1px var(--text)" : undefined,
                       }}
                     />
-                  ))}
+                  ),
+                )}
               </div>
             ))}
           </div>
 
           <div className="relative mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-panel2">
-            <span className="absolute inset-y-0 left-0 rounded-full bg-accent" style={{ width: `${pct}%` }} />
+            <span
+              className="absolute inset-y-0 left-0 rounded-full bg-accent"
+              style={{ width: `${pct}%`, transition: gliding ? "width 380ms cubic-bezier(0.22, 0.8, 0.24, 1)" : "none" }}
+            />
           </div>
 
           <span
             className="pointer-events-none absolute bottom-1 top-1 w-px bg-text"
-            style={{ left: `${pct}%` }}
+            style={{ left: `${pct}%`, transition: gliding ? "left 380ms cubic-bezier(0.22, 0.8, 0.24, 1)" : "none" }}
           />
 
           {scrub && (
@@ -422,7 +465,8 @@ export function VideoStage({
             >
               <span className="num">{timecode(scrub.t)}</span>
               {scrubEvents.map((e, i) => (
-                <span key={i} className="ml-1.5" style={{ color: classColor(e[2]) }}>
+                <span key={i} className="ml-2 inline-flex items-center gap-1 text-muted">
+                  <span className="inline-block h-[3px] w-2.5 rounded-full" style={{ background: classColor(e[2]) }} />
                   {classLabel(e[2])}
                 </span>
               ))}
@@ -455,6 +499,16 @@ export function VideoStage({
           <IconBtn onClick={() => seek(currentTime + 1 / fps)} label="Next frame">
             +1f
           </IconBtn>
+          {events.length > 0 && (
+            <>
+              <IconBtn onClick={() => stepEvent(-1)} label="Previous event (p)">
+                &lsaquo; ev
+              </IconBtn>
+              <IconBtn onClick={() => stepEvent(1)} label="Next event (n)">
+                ev &rsaquo;
+              </IconBtn>
+            </>
+          )}
 
           <span className="num ml-1 text-xs text-muted">
             {timecode(currentTime)} <span className="text-faint">/ {timecode(duration)}</span>
@@ -508,6 +562,30 @@ export function VideoStage({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A brief confirmation on the picture that the player moved to the picked event. */
+function JumpNotice({ event, fact }: { event: EventTuple; fact?: EventFact }) {
+  const [s, e, label] = event;
+  return (
+    <div
+      role="status"
+      className="anim-toast pointer-events-none absolute left-1/2 top-12 z-10 flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-md border border-white/15 bg-black/80 px-3 py-1.5 text-[11px] text-white/85 backdrop-blur-sm"
+    >
+      <span className="num text-[10px] uppercase tracking-wider text-white/55">jumped to</span>
+      <span className="inline-block h-[3px] w-3 shrink-0 rounded-full" style={{ background: classColor(label) }} />
+      <span className="truncate font-semibold text-white">{classLabel(label)}</span>
+      <span className="num shrink-0">
+        {timecode(s)} &rarr; {timecode(e)}
+      </span>
+      {fact && fact.tracks.length > 0 && (
+        <span className="num hidden truncate text-white/60 sm:inline">
+          tracks {fact.tracks.slice(0, 3).map(pad3).join(" ")}
+          {fact.region ? ` · ${regionLabel(fact.region)}` : ""}
+        </span>
+      )}
     </div>
   );
 }

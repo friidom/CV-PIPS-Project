@@ -254,7 +254,8 @@ def evidence_spans(p: dict, duration: float) -> list[tuple[float, float, str, tu
 
 
 def build_overlay(name: str, p: dict, t0: float, span: float, events: list, space: str,
-                  spans: list | None = None) -> dict | None:
+                  spans: list | None = None, table=None,
+                  frame: tuple[float, float] = (3840.0, 2160.0)) -> dict | None:
     """Real tracked objects over a time window, as compact per-frame arrays.
 
     Every box here is a YOLO11m detection the tracker kept, carrying the id the
@@ -270,12 +271,17 @@ def build_overlay(name: str, p: dict, t0: float, span: float, events: list, spac
 
     `spans` carries evidence_spans(); each box gets the index of the event it is
     evidence for, or -1. First label wins, matching render_video.py's setdefault.
+
+    `table` reuses tracks the caller already built (the live demo) instead of
+    re-running the tracker; `frame` is the pixel frame the boxes are in — the
+    sample clips are 4K, an upload is whatever it was recorded at.
     """
     from traffic.perception import Detections
     from traffic.scene import apply_homography
     from traffic.tracks import build_tracks
 
-    table = build_tracks(Detections(p["fps"], p["frames"], p["frame_of"], p["boxes"]))
+    if table is None:
+        table = build_tracks(Detections(p["fps"], p["frames"], p["frame_of"], p["boxes"]))
     if not len(table.rows):
         return None
     rows, fps = table.rows, p["fps"]
@@ -284,7 +290,7 @@ def build_overlay(name: str, p: dict, t0: float, span: float, events: list, spac
     if not len(win):
         return None
 
-    sx, sy = REF_SIZE[0] / 3840.0, REF_SIZE[1] / 2160.0
+    sx, sy = REF_SIZE[0] / frame[0], REF_SIZE[1] / frame[1]
     cx = (win[:, 2] + win[:, 4]) * 0.5
     cy = (win[:, 3] + win[:, 5]) * 0.5
     w, h = win[:, 4] - win[:, 2], win[:, 5] - win[:, 3]
@@ -293,7 +299,7 @@ def build_overlay(name: str, p: dict, t0: float, span: float, events: list, spac
         cx, cy, w, h = ctr[:, 0], ctr[:, 1], w * sx, h * sy
         fw, fh = float(REF_SIZE[0]), float(REF_SIZE[1])
     else:
-        fw, fh = 3840.0, 2160.0
+        fw, fh = frame
 
     q = lambda a, s: np.clip(np.round(a / s * 1000.0), -200, 1200).astype(int)  # noqa: E731
     qx, qy, qw, qh = q(cx, fw), q(cy, fh), q(w, fw), q(h, fh)

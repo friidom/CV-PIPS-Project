@@ -54,6 +54,7 @@ export default function Eda() {
     setDensity(null);
     setPhase(null);
     setDetector(null);
+    setSample(null);
     void loadData<DensitySeries>(`eda/density-${clip}.json`, ac.signal).then(setDensity);
     void loadData<PhaseSeries>(`eda/phase-${clip}.json`, ac.signal).then(setPhase);
     void loadData<DetectorStats>(`eda/detector-${clip}.json`, ac.signal).then(setDetector);
@@ -61,7 +62,10 @@ export default function Eda() {
     return () => ac.abort();
   }, [clip]);
 
-  const duration = sample?.meta.duration ?? 127.6;
+  const duration = sample?.meta.duration ?? phase?.t.at(-1) ?? 0;
+  // The first period can be cut short by the reader locking on; the median is the cycle.
+  const periods = [...(phase?.cycle_periods ?? [])].sort((a, b) => a - b);
+  const cycle = periods.length ? periods[Math.floor(periods.length / 2)] : null;
   const clipPicker = (
     <div className="mb-4 flex flex-wrap items-center gap-2">
       <span className="text-xs text-faint">Clip</span>
@@ -97,7 +101,7 @@ export default function Eda() {
           <Stat
             value={density ? group(density.sampled_frames) : "—"}
             label="Frames actually decoded"
-            hint="of ~3 825 in the 127 s clip"
+            hint={sample ? `of ${group(sample.meta.n_frames)} in the ${sample.meta.duration.toFixed(0)} s clip` : undefined}
           />
         </div>
         <Finding
@@ -110,7 +114,7 @@ export default function Eda() {
               and <span className="num">perception.py</span> splits the file across three decoder
               threads. That single decision is why Part A finishes in{" "}
               <span className="num">
-                {sample?.runtime ? (sample.runtime.part_a_sec / sample.runtime.duration).toFixed(2) : "0.18"}×
+                {sample?.runtime ? `${(sample.runtime.part_a_sec / sample.runtime.duration).toFixed(2)}×` : "—"}
               </span>{" "}
               real time rather than hitting the budget.
             </>
@@ -163,7 +167,7 @@ export default function Eda() {
             <div>
               <div className="grid grid-cols-2 gap-3">
                 <Stat value={group(flow.total_samples)} label="Motion samples" hint="moving vehicles, 4 clips" />
-                <Stat value={flow.cells_with_data} label="Cells with data" hint={`of ${18 * 32} in the grid`} />
+                <Stat value={flow.cells_with_data} label="Cells with data" hint={`of ${flow.dx.length * (flow.dx[0]?.length ?? 0)} in the grid`} />
                 <Stat value={flow.cells_one_way} label="Reliably one-way" tone="accent" hint={`consistency ≥ ${flow.min_consistency}, ≥ ${flow.min_count} samples`} />
                 <Stat
                   value={`${((flow.cells_one_way / Math.max(flow.cells_with_data, 1)) * 100).toFixed(0)}%`}
@@ -202,9 +206,9 @@ export default function Eda() {
             </Panel>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Stat
-                value={phase.cycle_periods.length ? `${phase.cycle_periods[0]}s` : "—"}
+                value={cycle !== null ? `${cycle}s` : "—"}
                 label="Cycle period"
-                hint="red onset to red onset"
+                hint={`median red onset to red onset, ${periods.length} cycle${periods.length === 1 ? "" : "s"}`}
               />
               <Stat value={`${phase.seconds_by_phase.red}s`} label="Red" tone="bad" />
               <Stat value={`${phase.seconds_by_phase.green}s`} label="Green" tone="ok" />
@@ -215,7 +219,7 @@ export default function Eda() {
               />
             </div>
             <Finding
-              observation={`One full cycle lasts ${phase.cycle_periods[0] ?? 75}s on this approach, and every lamp is dark for well over half of it. In daylight the lamp housing is brighter than the lit LED, so raw brightness does not separate on from off.`}
+              observation={`${cycle !== null ? `One full cycle lasts ${cycle}s on this approach` : "No complete cycle fits in this clip"}, and every lamp is dark for well over half of it. In daylight the lamp housing is brighter than the lit LED, so raw brightness does not separate on from off.`}
               changed={
                 <>
                   <span className="num">signals.py</span> scores each lamp as{" "}

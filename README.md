@@ -164,6 +164,10 @@ python tools/eval_dev.py ../dev_labels.json predictions_dev.json
 python tools/render_video.py C3905.MP4 --proxy <720p proxy> \
     --pred predictions_samples.json --out renders/C3905_annotated.mp4
 
+# pipeline / efficiency ablation: detector A vs B, frame rate, tracking on/off
+# (measured runtime, detections, tracks, events; agreement between runs, not accuracy)
+python tools/ablation.py --video web/public/media/samples/C3905_720p.mp4 --seconds 60
+
 python -m pytest tests/ -q
 ```
 
@@ -174,6 +178,7 @@ python -m pytest tests/ -q
 python run_submission.py --videos samples --out predictions_samples.json --team wiut-cv
 python scripts/build_media.py --videos samples        # proxies, posters, annotated renders
 python scripts/build_site_data.py                     # web/public/data/*.json
+python scripts/build_event_facts.py                   # events.json: evidence tracks + scene region per event
 
 # 2. the live-demo backend (imports src/traffic directly; uses the GPU if present)
 pip install -r server/requirements.txt
@@ -190,7 +195,9 @@ deployment is a single origin: build the frontend, then run uvicorn. For a split
 deployment (static host + separate API), set `VITE_API_BASE` at build time.
 
 Demo limits are `DEMO_MAX_UPLOAD_MB` (default 200) and `DEMO_MAX_DURATION_SEC`
-(default 120).
+(default 120). Live mode (`/demo#live`) streams webcam frames, or a sample clip played
+in real time, to `POST /api/live/{session}` for detection and tracking only (the event
+rules need whole-clip context); it pauses whenever an upload is being analysed.
 
 Missing inputs are handled rather than faked: `scripts/build_site_data.py` records
 every absent asset in `web/public/data/manifest.json`, and the site renders an

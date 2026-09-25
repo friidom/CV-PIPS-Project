@@ -3,15 +3,17 @@ import { useSearchParams } from "react-router-dom";
 import { EventInspector } from "../components/EventInspector";
 import { EventTimeline } from "../components/EventTimeline";
 import { RiskCurve } from "../components/RiskCurve";
+import { TrafficMonitor } from "../components/TrafficMonitor";
 import { VideoStage } from "../components/VideoStage";
 import { BarList } from "../components/charts";
 import { Callout, DataGap, Panel, Section, Stat } from "../components/ui";
 import { loadData } from "../lib/api";
 import { byClassOrder, classColor } from "../lib/classes";
+import { factsFromOverlay, type EventFacts } from "../lib/events";
 import { useReveal } from "../lib/hooks";
 import type { OverlayData } from "../lib/overlay";
 import { PlaybackProvider, usePlayback } from "../lib/playback";
-import type { Manifest, SampleData } from "../lib/types";
+import type { EventTuple, Manifest, SampleData } from "../lib/types";
 
 const BASE = import.meta.env.BASE_URL;
 const SAMPLE_IDS = ["C3896", "C3897", "C3902", "C3905"];
@@ -23,11 +25,12 @@ export default function Samples() {
   const [overlay, setOverlay] = useState<OverlayData | null>(null);
   const [overlayFor, setOverlayFor] = useState<string | null>(null);
   const [view, setView] = useState<"source" | "annotated">("source");
-  const [selected, setSelected] = useState<number | null>(null);
   const [visible, setVisible] = useState<Set<string>>(new Set());
+  const [eventFacts, setEventFacts] = useState<EventFacts | null>(null);
 
   const wanted = params.get("clip");
   const wantedTime = params.get("t");
+  const wantedEvent = params.get("ev");
   const active = wanted && SAMPLE_IDS.includes(wanted) ? wanted : (Object.keys(loaded)[0] ?? null);
 
   useEffect(() => {
@@ -43,6 +46,8 @@ export default function Samples() {
       }
       setLoaded(got);
     });
+    // Evidence tracks and regions per event (scripts/build_event_facts.py); optional.
+    void loadData<EventFacts>("events.json", ac.signal).then(setEventFacts);
     return () => ac.abort();
   }, []);
 
@@ -63,8 +68,15 @@ export default function Samples() {
   useEffect(() => {
     if (!sample) return;
     setVisible(new Set(sample.events.map((e) => e[2])));
-    setSelected(null);
   }, [sample]);
+
+  const liveOverlay = view === "source" && overlayFor === active ? overlay : null;
+  const facts = useMemo(() => {
+    if (!sample) return null;
+    const built = eventFacts?.clips[sample.id]?.events;
+    if (built && built.length === sample.events.length) return built;
+    return overlay && overlayFor === sample.id ? factsFromOverlay(overlay, sample.events) : null;
+  }, [sample, eventFacts, overlay, overlayFor]);
 
   const perClass = useMemo(() => {
     if (!sample) return [];
@@ -123,7 +135,7 @@ export default function Samples() {
 
       {sample ? (
         <PlaybackProvider key={sample.id}>
-          <SeekOnMount t={wantedTime} />
+          <SeekOnMount t={wantedTime} ev={wantedEvent} events={sample.events} />
           <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px]">
             <div className="min-w-0 space-y-4">
               <div>
@@ -155,8 +167,9 @@ export default function Samples() {
                     events={sample.events}
                     label={sample.meta.name}
                     fps={sample.meta.fps}
-                    overlay={view === "source" && overlayFor === active ? overlay : null}
+                    overlay={liveOverlay}
                     alignment={sample.alignment}
+                    facts={facts}
                   />
                 ) : (
                   <DataGap
@@ -190,12 +203,12 @@ export default function Samples() {
                   events={sample.events}
                   duration={sample.meta.duration}
                   visible={visible}
-                  selected={selected}
-                  onSelect={setSelected}
+                  facts={facts}
                 />
                 <p className="mt-2 text-[11px] text-faint">
-                  Click any block to jump the player to it. Different classes overlap freely; the task
-                  only forbids two segments of the same class from overlapping.
+                  Click any block to jump the player to it; the pick is highlighted in the player, the
+                  list, the risk curve and the monitor at once. Different classes overlap freely; the
+                  task only forbids two segments of the same class from overlapping.
                 </p>
               </Panel>
 
@@ -203,13 +216,61 @@ export default function Samples() {
                 <h3 className="mb-1 text-sm font-semibold">Accident risk &mdash; Part B</h3>
                 <p className="mb-3 text-xs leading-relaxed text-muted">
                   One score per frame, written by the harness. The curve keeps the peak of every{" "}
-                  {sample.risk_stride}-frame bucket, so a spike can never be smoothed away.
+                  {sample.risk_stride}-frame bucket, so a spike can never be smoothed away. Part A
+                  events sit underneath on the same clock &mdash; hover one, click to jump. The
+                  harness records the combined score only; the live demo also shows the three cues
+                  behind it for any clip you upload.
                 </p>
-                <RiskCurve risk={sample.risk} duration={sample.meta.duration} />
+                <RiskCurve
+                  risk={sample.risk}
+                  duration={sample.meta.duration}
+                  events={sample.events}
+                  visible={visible}
+                  facts={facts}
+                />
               </Panel>
             </div>
 
-            <aside className="space-y-4">
+            <aside className="min-w-0 space-y-4">
+              <TrafficMonitor
+                mode="replay"
+                clip={sample.meta.name}
+                events={sample.events}
+                risk={sample.risk}
+                duration={sample.meta.duration}
+                overlay={overlayFor === sample.id ? overlay : null}
+                facts={facts}
+                processing={
+                  sample.runtime
+                    ? {
+                        partA: sample.runtime.part_a_sec,
+                        partB: sample.runtime.part_b_sec,
+                        total: sample.runtime.total_sec,
+                        by: "run_submission.py (RTX 5080, 4K original)",
+                      }
+                    : null
+                }
+              />
+
+              <Panel className="flex max-h-[460px] flex-col p-4">
+                <h3 className="mb-3 text-sm font-semibold">All events</h3>
+                <EventInspector
+                  events={sample.events}
+                  visible={visible}
+                  onToggleClass={(id) =>
+                    setVisible((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    })
+                  }
+                  onShowAll={() => setVisible(new Set(sample.events.map((e) => e[2])))}
+                  facts={facts}
+                  risk={sample.risk}
+                />
+              </Panel>
+
               <div className="grid grid-cols-2 gap-3">
                 <Stat value={sample.events.length} label="Events" />
                 <Stat value={`${sample.meta.duration.toFixed(0)}s`} label="Duration" />
@@ -267,25 +328,6 @@ export default function Samples() {
                 </p>
                 <BarList bars={totalSeconds} format={(v) => `${v}s`} />
               </Panel>
-
-              <Panel className="flex max-h-[460px] flex-col p-4">
-                <h3 className="mb-3 text-sm font-semibold">All events</h3>
-                <EventInspector
-                  events={sample.events}
-                  visible={visible}
-                  onToggleClass={(id) =>
-                    setVisible((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(id)) next.delete(id);
-                      else next.add(id);
-                      return next;
-                    })
-                  }
-                  onShowAll={() => setVisible(new Set(sample.events.map((e) => e[2])))}
-                  selected={selected}
-                  onSelect={setSelected}
-                />
-              </Panel>
             </aside>
           </div>
         </PlaybackProvider>
@@ -339,22 +381,29 @@ export default function Samples() {
 }
 
 /**
- * Applies a ?t= deep link once, after the provider mounts.
+ * Applies a ?t= or ?ev= deep link once, after the provider mounts; ?ev= (an event
+ * index, as the dashboard links it) also selects that event everywhere.
  *
  * Lives inside <PlaybackProvider> because that is where the clock the timeline
  * and risk curve read actually exists.
  */
-function SeekOnMount({ t }: { t: string | null }) {
-  const { seek } = usePlayback();
+function SeekOnMount({ t, ev, events }: { t: string | null; ev: string | null; events: EventTuple[] }) {
+  const { seek, select } = usePlayback();
   const done = useRef(false);
   useEffect(() => {
-    if (done.current || !t) return;
-    const n = Number(t);
+    if (done.current) return;
+    const i = ev === null ? NaN : Number(ev);
+    if (Number.isInteger(i) && events[i]) {
+      done.current = true;
+      select(i, events[i][0]);
+      return;
+    }
+    const n = t === null ? NaN : Number(t);
     if (Number.isFinite(n)) {
       done.current = true;
       seek(n);
     }
-  }, [t, seek]);
+  }, [t, ev, events, seek, select]);
   return null;
 }
 

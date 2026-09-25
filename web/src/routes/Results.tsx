@@ -41,14 +41,19 @@ export default function Results() {
     const peakRisk = sample.risk.reduce((m, p) => Math.max(m, p[1]), 0);
     const alarms = findAlarms(sample.risk);
 
-    // Pairs of different classes that overlap in time, as the timeline shows them.
+    // Pairs of different classes that overlap in time, as the timeline shows them, and how
+    // many of those pairs involve a clip-spanning segment.
     const overlaps = new Map<string, number>();
+    const viaSpanning = new Map<string, number>();
     for (let i = 0; i < events.length; i++) {
       for (let j = i + 1; j < events.length; j++) {
         if (events[i][2] === events[j][2]) continue;
         if (events[i][0] < events[j][1] && events[j][0] < events[i][1]) {
           const key = [events[i][2], events[j][2]].sort().join(" + ");
           overlaps.set(key, (overlaps.get(key) ?? 0) + 1);
+          if (spanning.includes(events[i]) || spanning.includes(events[j])) {
+            viaSpanning.set(key, (viaSpanning.get(key) ?? 0) + 1);
+          }
         }
       }
     }
@@ -62,6 +67,7 @@ export default function Results() {
       peakRisk,
       alarms,
       overlaps: [...overlaps.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5),
+      viaSpanning,
       medianDur:
         events.length === 0
           ? 0
@@ -134,8 +140,9 @@ export default function Results() {
           lead={
             <>
               Measured by the organizers&rsquo; own harness on{" "}
-              <span className="num">{sample.meta.name}</span> &mdash; 127&nbsp;s of 4K footage, on one
-              RTX&nbsp;5080. The limit is 3&times; the clip duration for Part A and Part B together.
+              <span className="num">{sample.meta.name}</span> &mdash; {sample.meta.duration.toFixed(0)}&nbsp;s of 4K
+              footage, on one RTX&nbsp;5080. The limit is 3&times; the clip duration for Part A and Part B
+              together.
             </>
           }
         >
@@ -212,7 +219,7 @@ export default function Results() {
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-faint">Alarms raised</dt>
-                  <dd className="num">0</dd>
+                  <dd className="num">{analysis.alarms.length}</dd>
                 </div>
               </dl>
             </Panel>
@@ -231,10 +238,21 @@ export default function Results() {
                 }))}
                 format={(v) => `${v} pairs`}
               />
-              <p className="mt-3 text-[12px] leading-relaxed text-muted">
-                jaywalking overlapping failure_to_yield is the signature of this junction: pedestrians
-                cross outside the painted crossings, and vehicles drive through while they do.
-              </p>
+              {analysis.overlaps.length > 0 && (
+                <p className="mt-3 text-[12px] leading-relaxed text-muted">
+                  The most frequent pair here is <span className="num">{analysis.overlaps[0][0]}</span>, with{" "}
+                  {analysis.overlaps[0][1]} overlaps.
+                  {(analysis.viaSpanning.get(analysis.overlaps[0][0]) ?? 0) > 0 && (
+                    <>
+                      {" "}
+                      {analysis.viaSpanning.get(analysis.overlaps[0][0])} of them involve the{" "}
+                      <span className="num">{analysis.spanning[0][2]}</span> segment spanning over 90% of the
+                      clip &mdash; the near-certain false positive described below, not a pattern in the
+                      traffic.
+                    </>
+                  )}
+                </p>
+              )}
             </Panel>
           </div>
         </Section>

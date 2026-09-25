@@ -9,6 +9,13 @@ import {
   type ReactNode,
 } from "react";
 
+/** A seek far enough to be worth animating; `index` is set when it came from picking an event. */
+export interface Jump {
+  id: number;
+  t: number;
+  index: number | null;
+}
+
 interface PlaybackState {
   currentTime: number;
   duration: number;
@@ -17,7 +24,15 @@ interface PlaybackState {
   setDuration: (d: number) => void;
   registerVideo: (el: HTMLVideoElement | null) => void;
   togglePlay: () => void;
+  /** Event selected in any view — timeline, list, risk curve or player — shared by all of them. */
+  selected: number | null;
+  /** Select an event (null clears); with `t`, also jump the video to it. */
+  select: (index: number | null, t?: number) => void;
+  jump: Jump | null;
 }
+
+/** Seeks shorter than this are playback or frame steps, not jumps. */
+const JUMP_SEC = 0.5;
 
 const Ctx = createContext<PlaybackState | null>(null);
 
@@ -30,9 +45,13 @@ const Ctx = createContext<PlaybackState | null>(null);
 export function PlaybackProvider({ children }: { children: ReactNode }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const pendingSeek = useRef<number | null>(null);
+  const timeRef = useRef(0);
+  const jumps = useRef(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDurationState] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [jump, setJump] = useState<Jump | null>(null);
 
   /**
    * Hand a held seek to `el`, immediately if it has a duration and on
@@ -77,8 +96,13 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   );
 
   const seek = useCallback(
-    (t: number) => {
+    (t: number, index: number | null = null) => {
       const target = Math.max(0, t);
+      if (index !== null || Math.abs(target - timeRef.current) > JUMP_SEC) {
+        jumps.current += 1;
+        setJump({ id: jumps.current, t: target, index });
+      }
+      timeRef.current = target;
       setCurrentTime(target);
       // Recorded unconditionally: the element may not exist yet, and the rAF
       // loop treats a non-null pendingSeek as "do not overwrite the optimistic
@@ -88,6 +112,14 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       if (el) applyPending(el);
     },
     [applyPending],
+  );
+
+  const select = useCallback(
+    (index: number | null, t?: number) => {
+      setSelected(index);
+      if (t !== undefined) seek(t, index);
+    },
+    [seek],
   );
 
   const togglePlay = useCallback(() => {
@@ -108,6 +140,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         const t = el.currentTime;
         if (Math.abs(t - last) > 1 / 60) {
           last = t;
+          timeRef.current = t;
           setCurrentTime(t);
         }
         setPlaying(!el.paused && !el.ended);
@@ -127,8 +160,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       setDuration: setDurationState,
       registerVideo,
       togglePlay,
+      selected,
+      select,
+      jump,
     }),
-    [currentTime, duration, playing, seek, registerVideo, togglePlay],
+    [currentTime, duration, playing, seek, registerVideo, togglePlay, selected, select, jump],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -139,3 +175,22 @@ export function usePlayback(): PlaybackState {
   if (!ctx) throw new Error("usePlayback must be used inside <PlaybackProvider>");
   return ctx;
 }
+
+/**
+ * True for a moment after each jump. Playheads switch on a CSS transition while
+ * it holds, so a jump glides and ordinary playback stays locked to the frame.
+ */
+export function useGliding(): boolean {
+  const { jump } = usePlayback();
+  const [gliding, setGliding] = useState(false);
+  useEffect(() => {
+    if (!jump) return;
+    setGliding(true);
+    const id = window.setTimeout(() => setGliding(false), 420);
+    return () => window.clearTimeout(id);
+  }, [jump]);
+  return gliding;
+}
+
+/** The transition a playhead wears while gliding. */
+export const GLIDE = "transform 380ms cubic-bezier(0.22, 0.8, 0.24, 1)";

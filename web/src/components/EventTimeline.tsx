@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { byClassOrder, classColor, classLabel } from "../lib/classes";
+import type { EventFact } from "../lib/events";
 import { timecode } from "../lib/format";
-import { usePlayback } from "../lib/playback";
+import { GLIDE, useGliding, usePlayback } from "../lib/playback";
 import { useElementSize, usePrefersReducedMotion, useReveal } from "../lib/hooks";
 import type { EventTuple } from "../lib/types";
+import { EventTip, niceTicks, Tip } from "./viz";
 
 const LANE_H = 26;
 const LANE_GAP = 4;
@@ -17,8 +19,8 @@ interface Props {
   duration: number;
   /** Class ids currently shown; undefined = all. */
   visible?: Set<string>;
-  onSelect?: (index: number) => void;
-  selected?: number | null;
+  /** Evidence per event, same order as `events`, for the hover card. */
+  facts?: EventFact[] | null;
   height?: number;
 }
 
@@ -27,31 +29,19 @@ interface Lane {
   items: { index: number; start: number; end: number }[];
 }
 
-interface Hover {
-  x: number;
-  y: number;
-  index: number;
-}
-
 /**
  * Event segments as one lane per class, drawn on canvas.
  *
- * Canvas rather than SVG: a long clip carries hundreds of blocks and the playhead
- * repaints every animation frame. Hit-testing runs against the same lane geometry,
- * so there is no second DOM tree to keep in sync.
+ * Canvas rather than SVG: a long clip carries hundreds of blocks. The canvas
+ * repaints only when the lanes, zoom, hover or selection change; the playhead is
+ * a DOM line on top, so playback never repaints the blocks and a jump can glide.
  */
-export function EventTimeline({
-  events,
-  duration,
-  visible,
-  onSelect,
-  selected = null,
-  height,
-}: Props) {
+export function EventTimeline({ events, duration, visible, facts, height }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [wrapRef, size] = useElementSize<HTMLDivElement>();
-  const { currentTime, seek } = usePlayback();
-  const [hover, setHover] = useState<Hover | null>(null);
+  const { currentTime, seek, selected, select, jump } = usePlayback();
+  const gliding = useGliding();
+  const [hover, setHover] = useState<{ x: number; y: number; index: number } | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState(0);
   const [growRef, growShown] = useReveal<HTMLDivElement>();
@@ -113,6 +103,16 @@ export function EventTimeline({
     [t0, t1, plotW, GUTTER],
   );
 
+  // Picking an event that is off screen in a zoomed view brings it into view.
+  useEffect(() => {
+    if (jump?.index == null || zoom <= 1) return;
+    const e = events[jump.index];
+    if (e && (e[0] < t0 || e[0] > t1)) setPan(Math.max(0, e[0] - span / 4));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jump]);
+
+  const hoverIndex = hover?.index ?? null;
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !w) return;
@@ -161,7 +161,7 @@ export function EventTimeline({
       ctx.textAlign = "right";
       ctx.font = `${GUTTER < 100 ? 10 : 11}px ui-sans-serif, system-ui, sans-serif`;
       const name = lane.id;
-      ctx.fillText(name.length > 18 ? `${name.slice(0, 17)}\u2026` : name, GUTTER - 10, y + LANE_H / 2);
+      ctx.fillText(name.length > 18 ? `${name.slice(0, 17)}…` : name, GUTTER - 10, y + LANE_H / 2);
       ctx.fillStyle = classColor(lane.id);
       ctx.fillRect(GUTTER - 6, y + 6, 3, LANE_H - 12);
 
@@ -175,37 +175,22 @@ export function EventTimeline({
         const x2 = Math.min(xOf(item.end), GUTTER + plotW);
         const bw = Math.max(x2 - x1, MIN_BLOCK_PX) * ease;
         const isSel = selected === item.index;
+        const isHover = hoverIndex === item.index;
         ctx.fillStyle = classColor(lane.id);
-        ctx.globalAlpha = isSel ? 1 : 0.82;
+        // With a selection, everything else steps back so the pick reads first.
+        ctx.globalAlpha = isSel || isHover ? 1 : selected === null ? 0.82 : 0.45;
         roundRect(ctx, x1, y + 4, bw, LANE_H - 8, 3);
         ctx.fill();
         ctx.globalAlpha = 1;
-        if (isSel) {
+        if (isSel || isHover) {
           ctx.strokeStyle = text;
-          ctx.lineWidth = 1.5;
-          roundRect(ctx, x1, y + 4, bw, LANE_H - 8, 3);
+          ctx.lineWidth = isSel ? 1.5 : 1;
+          roundRect(ctx, x1 - 1.5, y + 2.5, bw + 3, LANE_H - 5, 4);
           ctx.stroke();
         }
       }
     });
-
-    if (currentTime >= t0 && currentTime <= t1) {
-      const x = Math.round(xOf(currentTime)) + 0.5;
-      ctx.strokeStyle = text;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, h - AXIS_H);
-      ctx.stroke();
-      ctx.fillStyle = text;
-      ctx.beginPath();
-      ctx.moveTo(x - 4, 0);
-      ctx.lineTo(x + 4, 0);
-      ctx.lineTo(x, 6);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }, [lanes, w, h, plotW, GUTTER, t0, t1, xOf, currentTime, selected, grow]);
+  }, [lanes, w, h, plotW, GUTTER, t0, t1, xOf, selected, hoverIndex, grow]);
 
   const hitTest = useCallback(
     (x: number, y: number) => {
@@ -231,16 +216,24 @@ export function EventTimeline({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const hit = hitTest(x, y);
-    if (hit) {
-      seek(hit.start);
-      onSelect?.(hit.index);
-    } else if (x >= GUTTER) {
-      seek(Math.max(0, Math.min(tOf(x), duration)));
-    }
+    if (hit) select(hit.index, hit.start);
+    else if (x >= GUTTER) seek(Math.max(0, Math.min(tOf(x), duration)));
   };
 
   const hovered = hover ? events[hover.index] : null;
   const segmentCount = lanes.reduce((n, l) => n + l.items.length, 0);
+  const playX = xOf(currentTime);
+  const showPlayhead = currentTime >= t0 && currentTime <= t1;
+
+  // Where the picked block sits, for the one-shot pulse that answers a jump.
+  const pulse = useMemo(() => {
+    if (jump?.index == null) return null;
+    const e = events[jump.index];
+    const lane = e ? lanes.findIndex((l) => l.id === e[2]) : -1;
+    if (!e || lane < 0 || e[1] < t0 || e[0] > t1) return null;
+    const x1 = Math.max(xOf(e[0]), GUTTER);
+    return { x: x1, y: lane * (LANE_H + LANE_GAP) + 4, w: Math.max(Math.min(xOf(e[1]), GUTTER + plotW) - x1, MIN_BLOCK_PX) };
+  }, [jump, events, lanes, t0, t1, xOf, GUTTER, plotW]);
 
   return (
     <div ref={growRef} className="w-full">
@@ -291,26 +284,32 @@ export function EventTimeline({
           role="img"
           aria-label={`Event timeline: ${segmentCount} segments across ${lanes.length} classes`}
         />
-        {hover && hovered && (
+        {showPlayhead && (
           <div
-            className="pointer-events-none absolute z-20 whitespace-nowrap rounded-md border border-line bg-panel px-2.5 py-1.5 text-xs shadow-lg"
+            aria-hidden="true"
+            className="pointer-events-none absolute left-0 top-0 w-px bg-text"
             style={{
-              left: Math.min(Math.max(hover.x - 70, 0), Math.max(w - 200, 0)),
-              top: Math.max(hover.y - 62, 0),
+              height: Math.max(h - AXIS_H, 0),
+              transform: `translateX(${playX}px)`,
+              transition: gliding ? GLIDE : "none",
             }}
           >
-            <div className="flex items-center gap-1.5 font-medium">
-              <span
-                className="inline-block h-2 w-2 rounded-[2px]"
-                style={{ background: classColor(hovered[2]) }}
-              />
-              {classLabel(hovered[2])}
-            </div>
-            <div className="num mt-0.5 text-muted">
-              {timecode(hovered[0])} &rarr; {timecode(hovered[1])} &middot;{" "}
-              {(hovered[1] - hovered[0]).toFixed(2)} s
-            </div>
+            <span className="absolute -left-1 -top-px h-0 w-0 border-x-4 border-t-[6px] border-x-transparent border-t-text" />
           </div>
+        )}
+        {pulse && (
+          <span
+            key={jump?.id}
+            aria-hidden="true"
+            className="anim-pick pointer-events-none absolute rounded"
+            style={{ left: pulse.x, top: pulse.y, width: pulse.w, height: LANE_H - 8 }}
+          />
+        )}
+        {hover && hovered && (
+          <Tip x={hover.x} y={hover.y} width={w}>
+            <EventTip event={hovered} fact={facts?.[hover.index]} prefix={`#${hover.index + 1}`} />
+            <div className="mt-1.5 text-[10px] text-faint">click to jump the video here</div>
+          </Tip>
         )}
       </div>
 
@@ -326,6 +325,9 @@ export function EventTimeline({
           className="mt-2 w-full"
         />
       )}
+      <span className="sr-only" aria-live="polite">
+        {selected !== null && events[selected] ? `Selected ${classLabel(events[selected][2])} at ${timecode(events[selected][0])}` : ""}
+      </span>
     </div>
   );
 }
@@ -363,15 +365,4 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.arcTo(x, y + h, x, y, rr);
   ctx.arcTo(x, y, x + w, y, rr);
   ctx.closePath();
-}
-
-/** Ticks on a 1/2/5 x 10^n ladder so labels stay round at every zoom level. */
-function niceTicks(lo: number, hi: number, count: number): number[] {
-  const raw = (hi - lo) / Math.max(count, 1);
-  const mag = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1e-6))));
-  const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
-  const first = Math.ceil(lo / step) * step;
-  const out: number[] = [];
-  for (let t = first; t <= hi + 1e-9; t += step) out.push(Number(t.toFixed(6)));
-  return out;
 }

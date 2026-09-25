@@ -28,6 +28,12 @@
   --g1: #78dc78;
   --g2: #3caaff;
   --g3: #e678e6;
+
+  /* Part B cues (conflict, red runner, braking), drawn beside the red score.
+     Validated as a set on this surface: lightness band, chroma, CVD and contrast. */
+  --cue1: #1597b0;
+  --cue2: #bd7a08;
+  --cue3: #9a66dc;
 }
 
 :root[data-theme="light"] {
@@ -53,6 +59,10 @@
   --g1: #2f7d4a;
   --g2: #175f9e;
   --g3: #8c3a8c;
+
+  --cue1: #0f8aa3;
+  --cue2: #9a5a00;
+  --cue3: #7a4fc4;
 }
 
 @theme inline {
@@ -242,6 +252,41 @@ a {
 
 .pulse-ring {
   animation: pulse-ring 2s cubic-bezier(0.2, 0.7, 0.2, 1) infinite;
+}
+
+/* Answers a jump: the picked event's block rings out twice, the player shows
+   where it landed. Both run once and end invisible. */
+@keyframes pick {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--text) 80%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 9px transparent;
+  }
+}
+
+.anim-pick {
+  animation: pick 700ms cubic-bezier(0.2, 0.7, 0.2, 1) 2 both;
+}
+
+@keyframes toast {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  10%,
+  78% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+.anim-toast {
+  animation: toast 2.2s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
 /* Draw-on for SVG paths; --len is set inline from the measured path length. */

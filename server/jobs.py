@@ -78,6 +78,7 @@ class JobStore:
         self._root = Path(tempfile.mkdtemp(prefix="wiut-cv-demo-"))
         self._worker: threading.Thread | None = None
         self._run: Callable[[Job], None] | None = None
+        self._active = False
 
     @property
     def root(self) -> Path:
@@ -120,6 +121,11 @@ class JobStore:
         with self._lock:
             return len(self._queue)
 
+    def busy(self) -> bool:
+        """An upload is queued or being analysed; live mode yields the machine to it."""
+        with self._lock:
+            return self._active or bool(self._queue)
+
     def _evict_locked(self) -> None:
         now = time.time()
         stale = [j for j in self._order if now - self._jobs[j].created > TTL_SEC]
@@ -141,6 +147,7 @@ class JobStore:
             if job is None or job.cancelled or self._run is None:
                 continue
             job.update(started=time.time(), stage="probing", message="Reading the video")
+            self._active = True
             try:
                 self._run(job)
             except Exception as exc:  # noqa: BLE001 - surfaced to the browser, never crashes the worker
@@ -148,6 +155,8 @@ class JobStore:
             else:
                 if not job.cancelled:
                     job.update(stage="done", progress=1.0, message="Complete", finished=time.time())
+            finally:
+                self._active = False
 
 
 store = JobStore()

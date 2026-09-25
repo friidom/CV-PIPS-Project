@@ -12,15 +12,19 @@ const Classes = lazy(() => import("./routes/Classes"));
 const Results = lazy(() => import("./routes/Results"));
 const Report = lazy(() => import("./routes/Report"));
 const Team = lazy(() => import("./routes/Team"));
+const Dashboard = lazy(() => import("./routes/Dashboard"));
+const Extra = lazy(() => import("./routes/Extra"));
 
 const NAV = [
   { to: "/", label: "Overview", end: true },
   { to: "/demo", label: "Live demo" },
   { to: "/samples", label: "Samples" },
+  { to: "/dashboard", label: "Dashboard" },
   { to: "/eda", label: "EDA" },
   { to: "/approach", label: "Approach" },
   { to: "/classes", label: "Classes" },
   { to: "/results", label: "Results" },
+  { to: "/extra", label: "Extra credit" },
   { to: "/report", label: "Report" },
   { to: "/team", label: "Team" },
 ];
@@ -65,7 +69,7 @@ export function App() {
             </span>
           </NavLink>
 
-          <nav className="ml-2 hidden min-w-0 flex-1 items-center gap-0.5 lg:flex" aria-label="Primary">
+          <nav className="ml-2 hidden min-w-0 flex-1 items-center gap-0.5 xl:flex" aria-label="Primary">
             {NAV.map((n) => (
               <NavLink
                 key={n.to}
@@ -104,7 +108,7 @@ export function App() {
               onClick={() => setOpen((o) => !o)}
               aria-label="Toggle navigation"
               aria-expanded={open}
-              className="grid h-8 w-8 place-items-center rounded-md border border-line text-muted lg:hidden"
+              className="grid h-8 w-8 place-items-center rounded-md border border-line text-muted xl:hidden"
             >
               <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.5">
                 {open ? (
@@ -122,7 +126,7 @@ export function App() {
         </div>
 
         {open && (
-          <nav className="border-t border-line bg-panel lg:hidden" aria-label="Mobile">
+          <nav className="border-t border-line bg-panel xl:hidden" aria-label="Mobile">
             <div className="mx-auto grid max-w-[1320px] grid-cols-2 gap-1 px-4 py-3 sm:grid-cols-3">
               {NAV.map((n) => (
                 <NavLink
@@ -157,6 +161,8 @@ export function App() {
             <Route path="/approach" element={<Approach />} />
             <Route path="/classes" element={<Classes />} />
             <Route path="/results" element={<Results />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/extra" element={<Extra />} />
             <Route path="/report" element={<Report />} />
             <Route path="/team" element={<Team />} />
             <Route path="*" element={<Overview />} />
