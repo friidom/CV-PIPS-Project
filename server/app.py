@@ -1,7 +1,7 @@
 """FastAPI backend for the live demo.
 
     uvicorn server.app:app --host 127.0.0.1 --port 8000     # local development
-    uvicorn server.app:app --host 0.0.0.0 --port 8000       # a server, behind a tunnel or proxy
+    ./start.sh                                              # the GPU server: this + a Cloudflare Quick Tunnel
 
 Endpoints
     GET  /api/health              liveness for uptime checks; never loads a model
