@@ -4,8 +4,8 @@ Traffic events from a fixed road camera: **detect** them as time segments
 (`[start_sec, end_sec, label]`) and, causally, **anticipate** accidents with a
 per-frame risk score.
 
-Team **wiut-cv**. Website: see [`web/`](web); it is deployed as one Docker container
-(site + live-demo API) following [`deploy/README.md`](deploy/README.md).
+Team **wiut-cv**. Website: see [`web/`](web); it is deployed as one process (site +
+live-demo API on one origin) on a GPU server, following [`deploy/README.md`](deploy/README.md).
 
 ## What we run
 
@@ -22,15 +22,15 @@ Measured over all four organizer clips (18.4 min of 3840×2160 at 29.97 fps, one
 
 | clip | duration | Part A | Part B | total | × duration | events |
 |---|---|---|---|---|---|---|
-| `C3896.MP4` | 340.3 s | 99.4 s | 143.0 s | 242.4 s | 0.71× | 26 |
+| `C3896.MP4` | 340.3 s | 99.4 s | 143.0 s | 242.4 s | 0.71× | 35 |
 | `C3897.MP4` | 317.8 s | 43.5 s | 132.5 s | 176.0 s | 0.55× | 38 |
-| `C3902.MP4` | 317.8 s | 44.0 s | 133.1 s | 177.1 s | 0.56× | 32 |
-| `C3905.MP4` | 127.6 s | 21.1 s | 54.0 s | 75.0 s | 0.59× | 23 |
-| **all four** | **1103.6 s** | **208.0 s** | **462.6 s** | **670.5 s** | **0.61×** | **119** |
+| `C3902.MP4` | 317.8 s | 44.0 s | 133.1 s | 177.1 s | 0.56× | 34 |
+| `C3905.MP4` | 127.6 s | 21.1 s | 54.0 s | 75.0 s | 0.59× | 22 |
+| **all four** | **1103.6 s** | **208.0 s** | **462.6 s** | **670.5 s** | **0.61×** | **129** |
 
-That is **20% of the 3.00× budget**. `predictions_samples.json` in this repository is
-that run, and passes `python evaluate.py --pred predictions_samples.json --validate-only`
-(4 videos, 119 events, 0 errors, 0 warnings).
+That is **20% of the 3.00× budget**. The event counts are those of the committed
+`predictions_samples.json`, which passes `python evaluate.py --pred predictions_samples.json --validate-only`
+(4 videos, 129 events, 0 errors, 0 warnings).
 
 ## Approach
 
@@ -184,7 +184,7 @@ python scripts/build_event_facts.py                   # events.json: evidence tr
 
 # 2. the live-demo backend (imports src/traffic directly; uses the GPU if present)
 pip install -r server/requirements.txt
-uvicorn server.app:app --host 127.0.0.1 --port 8000
+uvicorn server.app:app --host 127.0.0.1 --port 8000   # --host 0.0.0.0 on a server
 
 # 3. the frontend
 cd web && npm install
@@ -194,16 +194,29 @@ npm run build      # production build into web/dist
 
 `server/app.py` serves `web/dist` when that directory exists, so a production
 deployment is a single origin: build the frontend, then run uvicorn.
-[`deploy/Dockerfile`](deploy/Dockerfile) does both in one image (it is the website
-image, not the submission's install path) and [`deploy/README.md`](deploy/README.md)
-walks through hosting it on a Hugging Face Space, the environment variables, expected
-CPU speed and keeping it online. For a split deployment (static host + separate API),
-set `VITE_API_BASE` at build time and `DEMO_CORS_ORIGINS` on the server.
+[`deploy/README.md`](deploy/README.md) gives the exact commands for running it straight
+from a checkout on a GPU server behind Cloudflare Tunnel (no Docker, no root), and for
+the alternative [`deploy/Dockerfile`](deploy/Dockerfile) image on a Hugging Face Space
+(the website image, not the submission's install path). For a split deployment (static
+host + separate API), set `VITE_API_BASE` at build time and `DEMO_CORS_ORIGINS` on the server.
 
-Demo limits are `DEMO_MAX_UPLOAD_MB` (default 200), `DEMO_MAX_DURATION_SEC`
-(default 120) and `DEMO_MAX_QUEUE` (default 3); `GET /api/health` is the uptime probe. Live mode (`/demo#live`) streams webcam frames, or a sample clip played
-in real time, to `POST /api/live/{session}` for detection and tracking only (the event
-rules need whole-clip context); it pauses whenever an upload is being analysed.
+Demo limits are `DEMO_MAX_UPLOAD_MB` (default 200; use 95 behind Cloudflare, which caps
+request bodies at 100 MB), `DEMO_MAX_DURATION_SEC` (default 120) and `DEMO_MAX_QUEUE`
+(default 3); `GET /api/health` is the uptime probe and `GET /api/capabilities` reports
+the device and GPU the models loaded on.
+
+Live mode (`/demo#live`, the "live stream or webcam" extra-credit item) streams webcam
+frames, or a sample clip played in real time, to `POST /api/live/{session}?t=<sec>`.
+Each session runs Part B's `RiskModel` online over the frames it has received: YOLO11s
+detections, tracker ids and trails, and — once the first frame aligns to this camera's
+reference view — the live risk score, its conflict / red-runner / braking cues, the
+signal phase and an event log of alarms and cue onsets. A webcam aimed anywhere else
+does not align, so it gets detection and tracking only (every cue is measured in this
+camera's scene). Part A's event rules do not run live: they need the whole clip.
+Frames are paced to what the server asks for (6/s while the risk model runs, its
+calibrated rate), one request in flight; live mode pauses while an upload is analysed,
+and `DELETE /api/live/{session}` releases a session when the page stops it. Browsers
+allow the webcam only on `https://` or `http://localhost`.
 
 Missing inputs are handled rather than faked: `scripts/build_site_data.py` records
 every absent asset in `web/public/data/manifest.json`, and the site renders an

@@ -181,18 +181,20 @@ export default function Demo() {
   const stats = (result as unknown as { stats?: Record<string, number> })?.stats;
 
   return (
-    // Keyed by job, so a new result never inherits the previous one's selection or clock.
-    <PlaybackProvider key={result?.id ?? "idle"}>
+    // Keyed by job, so a new result never inherits the previous one's selection or clock. Held
+    // constant in live mode: an upload finishing in the background must not remount a running feed.
+    <PlaybackProvider key={mode === "live" ? "live" : (result?.id ?? "idle")}>
       <div className="mx-auto max-w-[1320px] px-4 py-10 sm:py-14">
         <Section
           eyebrow="Live demo"
-          title={mode === "live" ? "Detection and tracking on a live feed" : "Upload a clip, get its events back"}
+          title={mode === "live" ? "Live inference on a webcam or a stream" : "Upload a clip, get its events back"}
           lead={
             mode === "live" ? (
               <>
                 The causal, per-frame half of the system on frames streamed from your webcam or from a
-                sample clip played in real time: the YOLO11s detector the risk model uses and the same
-                online tracker, answered frame by frame with the measured latency.
+                sample clip played in real time: Part B&rsquo;s risk model run online &mdash; YOLO11s, the
+                tracker, and on this camera&rsquo;s scene the risk score and its cues &mdash; answered frame by
+                frame on the server (its GPU when it has one), with the measured latency.
               </>
             ) : (
               <>

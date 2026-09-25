@@ -31,8 +31,16 @@ venv/
 # Harness output (predictions_samples.json IS committed — the task asks for it)
 /predictions.json
 
+# Deployment secrets stay on the server (Cloudflare Tunnel credentials, env files)
+.cloudflared/
+cert.pem
+.env
+.env.*
+
 # Website
 web/node_modules/
 web/dist/
 web/.vite/
 server/.jobs/
+server.log
+server.pid

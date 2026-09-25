@@ -1,7 +1,71 @@
 # Deploying the website and live demo
 
-One Docker container serves everything: `server/app.py` (FastAPI) serves the built
-React site from `web/dist` **and** the inference API under `/api`, on one origin.
+One process serves everything: `server/app.py` (FastAPI) serves the built React site
+from `web/dist` **and** the inference API under `/api`, on one origin. It runs either
+directly from a checkout on a GPU server (below, no Docker and no root) or as the
+Docker image in this folder (a Hugging Face Space, further down).
+
+## Direct on a GPU server behind Cloudflare Tunnel (no Docker, no root)
+
+```
+browser ── HTTPS ──> Cloudflare ── Tunnel ──> cloudflared on the server ──> http://localhost:8000
+                                                                              uvicorn server.app:app
+                                                                              ├─ web/dist (the site)
+                                                                              └─ /api (CUDA inference)
+```
+
+Everything runs as an ordinary user from the repository directory; nothing is installed
+system-wide and no path is hard-coded, so the checkout can live anywhere. `PY` below is
+a Python ≥ 3.10 whose PyTorch already sees the GPU (an existing environment, or a new
+venv with `torch`/`torchvision` installed for the machine's CUDA).
+
+```bash
+git clone https://github.com/friidom/CV-PIPS-Project.git && cd CV-PIPS-Project
+PY=/path/to/python          # e.g. ../.venv/bin/python
+
+# 1. the GPU, as PyTorch sees it (what matters is torch's own CUDA runtime, not nvcc's version)
+$PY -c "import torch, torchvision; print(torch.__version__, torchvision.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+
+# 2. the server's dependencies; pinning the installed torch keeps pip from replacing it
+$PY -m pip install -r server/requirements.txt "torch==$($PY -c 'import torch; print(torch.__version__)')"
+
+# 3. the site (Node >= 20.19; without it, a user-space Node needs no root:
+#    curl -fsSL https://nodejs.org/dist/v22.20.0/node-v22.20.0-linux-x64.tar.xz | tar -xJ -C "$HOME"
+#    export PATH="$HOME/node-v22.20.0-linux-x64/bin:$PATH")
+(cd web && npm ci --no-audit --no-fund && npm run build)
+
+# 4. start it; one worker, because jobs and live sessions live in the process's memory
+DEMO_MAX_UPLOAD_MB=95 OMP_NUM_THREADS=16 nohup $PY -m uvicorn server.app:app \
+    --host 0.0.0.0 --port 8000 --workers 1 --timeout-keep-alive 75 > server.log 2>&1 &
+echo $! > server.pid
+
+# 5. check it from the server itself
+curl -s http://localhost:8000/api/health            # {"ok":true,"models":"ready",...} once loaded
+curl -s http://localhost:8000/api/capabilities      # "device":"cuda:0","gpu":"<the GPU's name>"
+grep "models ready" server.log                      # [server] models ready on cuda:0 (<GPU name>)
+
+# stop:  kill "$(cat server.pid)"
+```
+
+Then point the tunnel (configured separately, with its credentials kept outside the
+repository) at `http://localhost:8000`. Notes for this setup:
+
+- **Binding.** `--host 0.0.0.0` accepts connections on every interface; when cloudflared
+  runs on the same machine, `--host 127.0.0.1` is enough and exposes nothing else.
+- **Uploads.** Cloudflare refuses request bodies over 100 MB on its free plan, hence
+  `DEMO_MAX_UPLOAD_MB=95`; the page reads that limit from `/api/capabilities` and checks
+  files before sending them.
+- **Webcam.** Browsers allow the camera only on a secure origin: the Cloudflare
+  `https://` URL in production, or `http://localhost` during development. There is no
+  way (and no attempt) around that.
+- **Progress and live mode** are plain HTTP (SSE for job progress, one POST per live
+  frame), which a tunnel passes through; the page also polls, in case a proxy buffers SSE.
+- **Shared GPU.** The server loads three small TorchScript detectors in fp16 once, runs
+  one upload at a time, and pauses live mode while an upload runs. It never resets the
+  device or assumes it owns it. `OMP_NUM_THREADS` keeps torch's CPU threads to a fair
+  share of a large shared machine.
+
+## Without a GPU server: a Hugging Face Space (Docker SDK)
 
 ```
 judge's browser ── HTTPS ──> https://<user>-<space>.hf.space        (Hugging Face Space, Docker SDK)
@@ -18,8 +82,6 @@ This image is for the **website only**. The organizers' evaluation never uses it
 runs `pip install -r requirements.txt` and `run_submission.py` at the repository root,
 which is why the Dockerfile lives in `deploy/` and not at the root (a root `Dockerfile`
 is what the task's `docker build -t team .` option would pick up).
-
-## Recommended host: a Hugging Face Space (Docker SDK)
 
 Why this and not a split frontend/backend setup:
 

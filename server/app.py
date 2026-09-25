@@ -1,6 +1,7 @@
 """FastAPI backend for the live demo.
 
-    uvicorn server.app:app --host 127.0.0.1 --port 8000
+    uvicorn server.app:app --host 127.0.0.1 --port 8000     # local development
+    uvicorn server.app:app --host 0.0.0.0 --port 8000       # a server, behind a tunnel or proxy
 
 Endpoints
     GET  /api/health              liveness for uptime checks; never loads a model
@@ -10,7 +11,8 @@ Endpoints
     GET  /api/jobs/{id}/stream    the same payload as server-sent events
     GET  /api/jobs/{id}/media     the browser-playable copy, with range support
     DELETE /api/jobs/{id}         cancel
-    POST /api/live/{session}      one JPEG frame of a live feed -> tracked boxes (server/live.py)
+    POST /api/live/{session}?t=   one JPEG frame of a live feed -> tracks, risk, cues (server/live.py)
+    DELETE /api/live/{session}    end a live session
 
 It also serves web/dist when that build exists, so the site and the API can run as
 one origin on a single host.
@@ -61,10 +63,13 @@ _models: dict = {"state": "loading", "detail": None}
 
 def _warm() -> None:
     try:
-        inference.engine()
+        eng = inference.engine()
+        live.warm()
         _models.update(state="ready")
+        print(f"[server] models ready on {eng.device} ({eng.gpu_name() or 'no CUDA device'})", flush=True)
     except Exception as exc:  # noqa: BLE001 - reported by /api/capabilities
         _models.update(state="error", detail=f"{type(exc).__name__}: {exc}")
+        print(f"[server] model load failed: {_models['detail']}", file=sys.stderr, flush=True)
 
 
 def _run(job) -> None:
@@ -224,11 +229,22 @@ async def job_media(jid: str) -> FileResponse:
     return FileResponse(path, media_type="video/mp4", filename=f"{job.id}.mp4")
 
 
-@app.post("/api/live/{session}")
-async def live_frame(session: str, request: Request) -> dict:
-    """One frame of a live feed (JPEG body) -> tracked boxes. Uploads always come first."""
+def _live_session(session: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", session):
         raise HTTPException(400, "Bad session id.")
+    return session
+
+
+@app.post("/api/live/{session}")
+async def live_frame(session: str, request: Request, t: float | None = None) -> dict:
+    """One frame of a live feed (JPEG body, `t` = seconds into the feed) -> tracks, risk, cues.
+
+    Uploads always come first.
+    """
+    _live_session(session)
+    if _models["state"] != "ready":
+        raise HTTPException(503, "The models are still loading; live mode starts in a moment."
+                            if _models["state"] == "loading" else f"Models failed to load: {_models['detail']}")
     if store.busy():
         raise HTTPException(503, "An upload is being analysed; live mode resumes when it finishes.")
     body = bytearray()
@@ -239,11 +255,17 @@ async def live_frame(session: str, request: Request) -> dict:
     if not body:
         raise HTTPException(400, "Empty frame.")
     try:
-        return await run_in_threadpool(live.step, session, bytes(body))
+        return await run_in_threadpool(live.step, session, bytes(body), t)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     except OverflowError as exc:
         raise HTTPException(503, f"{exc}; try again in a minute.") from None
+
+
+@app.delete("/api/live/{session}")
+async def live_close(session: str) -> dict:
+    """The browser stopped its feed: drop the session's tracker now instead of at its TTL."""
+    return {"closed": live.close(_live_session(session))}
 
 
 DIST = ROOT / "web" / "dist"

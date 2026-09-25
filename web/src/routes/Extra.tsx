@@ -132,15 +132,16 @@ export default function Extra() {
           <Card
             n="05"
             title="Live stream / webcam"
-            status={<Tag tone="ok">detection + tracking</Tag>}
+            status={<Tag tone="ok">tracking + live risk</Tag>}
             to="/demo#live"
             cta="Open live mode"
-            limits="Event rules and the risk score are not run live: they need this camera's calibrated geometry and a whole-clip signal reading."
+            limits="Part A's event rules are not run live: they need a whole-clip signal reading and background. The risk cues need this camera's scene, so a webcam aimed elsewhere gets detection and tracking only."
           >
             <p>
-              The demo page streams webcam frames, or a sample clip played in real time, to the same
-              YOLO11s detector and tracker the risk model uses, and draws the tracked boxes back on the
-              feed with measured latency.
+              The demo page streams webcam frames, or a sample clip played in real time, to Part B&rsquo;s
+              risk model run online: YOLO11s, the tracker, and &mdash; once the feed aligns to this
+              camera&rsquo;s reference view &mdash; the live risk score, its conflict / red-runner / braking
+              cues and the signal phase, drawn back on the feed with ids, trails and measured latency.
             </p>
           </Card>
 
@@ -288,8 +289,8 @@ const IDEAS: { n: string; idea: string; status: Status; note: string; href: stri
   {
     n: "05",
     idea: "Running the demo on a live stream or a webcam.",
-    status: "partial",
-    note: "Webcam or a real-time clip: detection and tracking live. Events and risk run on uploaded clips only.",
+    status: "done",
+    note: "Webcam or a real-time clip: detection, tracking and the causal risk score live. Part A's event rules run on uploaded clips only.",
     href: "/demo#live",
   },
   {

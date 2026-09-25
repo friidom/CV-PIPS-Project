@@ -1,0 +1,661 @@
+Fix cv 
+
+FINAL PRE-DEPLOYMENT PASS — READ REPOSITORY FIRST
+
+You are working inside the cloned CV-PIPS-Project repository.
+
+This is the FINAL preparation pass before deployment to a remote Ubuntu server with an NVIDIA B200 GPU.
+==================================================
+FIRST: READ THE OFFICIAL PDF
+==================================================
+
+There is an official hackathon requirements PDF already located in this project/repository.
+
+You MUST find and read this PDF before making ANY changes.
+
+Do not rely on memory or assumptions about the hackathon requirements.
+
+Use the PDF as the primary source of truth for:
+- required functionality;
+- evaluation criteria;
+- extra-credit criteria;
+- live stream / webcam requirements;
+- demo requirements;
+- submission requirements;
+- technical constraints;
+- scoring/rubric.
+
+First locate the PDF with a filesystem search if its exact filename is unknown.
+
+For example, inspect:
+- *.pdf
+- docs/
+- documentation/
+- task/
+- requirements/
+
+Once found:
+1. Read the entire relevant PDF.
+2. Extract the complete requirements and rubric.
+3. Pay special attention to the section describing extra credit for running a demo on a live stream or webcam.
+4. Compare those requirements against the current repository.
+5. Only after this audit begin modifying the project.
+
+Do NOT skip the PDF because the repository already contains an implementation.
+
+If there are multiple PDFs, identify which one is the official hackathon task/requirements document and use that one as the source of truth.
+
+At the beginning of your final report, explicitly state:
+- PDF filename/path that you read;
+- which sections were relevant;
+- what the PDF requires;
+- how the final implementation satisfies those requirements.   ==================================================
+TARGET DEPLOYMENT ENVIRONMENT — IMPORTANT
+==================================================
+
+The final repository will NOT primarily run on the development Mac.
+
+After this final stabilization pass, the repository will be cloned onto
+a remote Ubuntu server and run there.
+
+You must take this target environment into account when reviewing and
+modifying the project.
+
+TARGET SERVER:
+
+Working directory:
+ /home/jovyan/work/hackaton
+
+OS:
+ Ubuntu 22.04.3 LTS
+
+User:
+ jovyan
+
+Root/sudo:
+ NOT AVAILABLE
+
+Python:
+ Python 3.11.6
+
+CPU:
+ Intel Xeon Platinum 8570
+ 224 cores
+
+RAM:
+ 2 TB
+
+GPU:
+ NVIDIA B200
+ 183 GB VRAM
+
+NVIDIA Driver:
+ 580.105.08
+
+CUDA toolkit:
+ 12.4
+ nvcc 12.4.131
+
+PyTorch:
+ already installed in the existing environment
+
+PyTorch environment:
+ /home/jovyan/work/hackaton/.venv-wiut/bin/python
+
+GPU verification on the target server:
+
+torch.cuda.is_available() == True
+torch.cuda.get_device_name(0) == "NVIDIA B200"
+
+The target environment already has CUDA/PyTorch GPU support working.
+
+IMPORTANT:
+- Do NOT reinstall CUDA.
+- Do NOT require root privileges.
+- Do NOT assume sudo is available.
+- Do NOT require Docker.
+- Do NOT require system-wide package installation.
+- Prefer user-space Python/Node tooling where possible.
+- Do not hardcode the target absolute path into application code.
+- The repository must remain portable and should work when cloned into
+  another directory.
+
+The target server is a shared Jupyter workload environment, so do not
+assume that systemd services can be installed.
+
+==================================================
+TARGET DEPLOYMENT ARCHITECTURE
+==================================================
+
+The intended final deployment is:
+
+Internet
+    ↓
+Cloudflare
+    ↓
+Cloudflare Tunnel
+    ↓
+Remote Ubuntu B200 server
+    ↓
+CV-PIPS-Project
+    ├── React frontend
+    ├── FastAPI backend
+    └── ML inference pipeline
+            ↓
+        NVIDIA B200
+
+The application should run directly from the repository without Docker.
+
+Cloudflare Tunnel will be configured separately on the server by the
+server user.
+
+Do NOT put Cloudflare credentials, tokens, tunnel IDs, or secrets into
+the repository.
+
+Do NOT implement Cloudflare infrastructure inside the application.
+
+The repository only needs to be compatible with this deployment.
+
+==================================================
+SERVER ACCESS / NETWORK ASSUMPTIONS
+==================================================
+
+The server does NOT have root privileges available to us.
+
+The application therefore needs to be runnable as the normal user
+"jovyan".
+
+The backend should be capable of listening on:
+
+0.0.0.0:<PORT>
+
+rather than being hardcoded to:
+
+127.0.0.1:<PORT>
+
+Cloudflare Tunnel will then forward public HTTPS traffic to the local
+application.
+
+Do not expose additional ports unnecessarily.
+
+The preferred final architecture is a single public origin where
+possible:
+
+Cloudflare HTTPS
+      ↓
+Cloudflare Tunnel
+      ↓
+application server
+      ├── frontend
+      └── backend/API
+
+Avoid unnecessary multi-server architecture.
+
+==================================================
+GPU / ML REQUIREMENTS
+==================================================
+
+The production inference must use the NVIDIA B200 when CUDA is
+available.
+
+Do not assume CPU inference for the final deployment.
+
+However:
+
+- keep CPU fallback behavior if the existing project supports it;
+- do not rewrite the ML pipeline solely because the target GPU is much
+  more powerful;
+- do not change model architecture unnecessarily;
+- do not change model weights unnecessarily;
+- do not change inference parameters unless required by the actual
+  project requirements or validated ML improvement.
+
+Check for code that incorrectly forces:
+
+device="cpu"
+
+or otherwise prevents CUDA usage.
+
+If such a problem exists, fix it minimally.
+
+Verify that the final backend can detect:
+
+CUDA available: True
+GPU: NVIDIA B200
+
+and use CUDA for inference.
+
+Do not assume that the CUDA toolkit version printed by nvcc must exactly
+match the CUDA runtime version reported by PyTorch. Verify actual
+PyTorch CUDA functionality instead.
+
+==================================================
+SHARED SERVER / EXISTING GPU PROCESSES
+==================================================
+
+The B200 is a shared environment.
+
+At the moment other Python processes are using approximately 5.7 GB of
+the 183 GB GPU memory.
+
+Therefore:
+
+- do not kill other processes;
+- do not assume the GPU is exclusively available;
+- do not add code that attempts to reset the GPU;
+- do not enable MIG;
+- do not require persistence-mode changes;
+- do not make unnecessary assumptions about GPU ownership.
+
+The available VRAM is still very large, but the application should use
+reasonable memory management.
+
+==================================================
+DEPLOYMENT PREPARATION
+==================================================
+
+As part of the final audit, verify that the repository can be deployed
+to the target environment with approximately this workflow:
+
+1. Clone the final public/private repository onto the server.
+
+2. Enter the repository.
+
+3. Create or use a user-space Python virtual environment.
+
+4. Install the project's Python dependencies.
+
+5. Verify PyTorch/CUDA/B200.
+
+6. Install frontend dependencies.
+
+7. Build the frontend if required.
+
+8. Start the FastAPI/backend application on 0.0.0.0.
+
+9. Verify the application locally from the server.
+
+10. Start Cloudflare Tunnel separately.
+
+11. Access the application through the Cloudflare HTTPS URL.
+
+Do NOT actually configure Cloudflare during this repository task.
+
+Instead, make the repository and README ready for these steps.
+
+At the end, provide the EXACT commands that should be executed on the
+B200 server, based on the actual repository structure.
+
+Do not invent commands.
+
+==================================================
+IMPORTANT DEPLOYMENT RULE
+==================================================
+
+The repository must remain portable.
+
+The following path:
+
+/home/jovyan/work/hackaton
+
+is ONLY the deployment environment.
+
+Do NOT put this absolute path into application source code.
+
+Use:
+- relative paths;
+- environment variables;
+- project-root resolution;
+- configurable paths.
+
+The project should also continue to work locally on the development
+machine.
+
+==================================================
+FINAL DEPLOYMENT READINESS CHECK
+==================================================
+
+Before finishing, explicitly verify:
+
+[ ] No root/sudo requirement
+[ ] No Docker requirement
+[ ] Python 3.11 compatible
+[ ] CUDA/PyTorch compatible
+[ ] B200 compatible
+[ ] GPU inference works when CUDA is available
+[ ] No hardcoded macOS paths
+[ ] No hardcoded Windows paths
+[ ] No hardcoded /home/jovyan paths
+[ ] Backend can bind to 0.0.0.0
+[ ] Frontend production build works
+[ ] Uploaded-video inference works
+[ ] Sample-video inference works
+[ ] Live webcam/stream extra-credit path works
+[ ] Cloudflare Tunnel can sit in front of the application
+[ ] No Cloudflare secrets are committed
+[ ] Existing required hackathon functionality remains intact 
+
+IMPORTANT:
+- First inspect and understand the repository completely enough to work safely.
+- DO NOT modify anything during the initial inspection.
+- Do not start implementing until you have inspected the relevant code, deployment files, README, requirements, tests, and the official task/requirements PDF if it exists in the repository.
+- The project is already mostly complete. This is NOT a rewrite.
+- Preserve the existing ML pipeline, model weights, inference behavior, predictions, site functionality, and existing architecture unless a concrete requirement or deployment issue requires a change.
+- Do not invent metrics, accuracy, labels, or results.
+- Do not perform unnecessary long-running experiments or ablations.
+- Do not spend 20–40 minutes investigating something unrelated to the requested final pass.
+- Prefer the smallest safe change that satisfies a requirement.
+- Do not commit or push anything unless explicitly asked.
+
+==================================================
+PHASE 1 — READ-ONLY REPOSITORY AUDIT
+==================================================
+
+Before changing anything:
+
+1. Inspect the repository structure.
+
+2. Read:
+   - README.md
+   - CLAUDE.md / project instructions if present
+   - package.json
+   - requirements.txt
+   - deployment-related files
+   - Docker/deploy files if present
+   - server code
+   - frontend structure
+   - ML/inference entry points
+   - evaluation scripts
+   - tests
+   - existing site-data/build scripts
+
+3. Locate the official hackathon task/requirements PDF and read it if it is present in the repository.
+
+4. Build an internal checklist from the ACTUAL PDF requirements and rubric.
+
+5. Inspect the current implementation against that checklist.
+
+6. Also inspect the current Git state:
+   - git status
+   - current branch
+   - uncommitted changes
+   - tracked/untracked files
+
+Do NOT reset, discard, checkout, stash, or overwrite existing work.
+
+At the end of Phase 1, briefly summarize:
+- what the project currently contains;
+- which requirements are already satisfied;
+- which requirements are missing;
+- which things are questionable;
+- what you intend to change.
+
+Then proceed automatically.
+
+==================================================
+PHASE 2 — LIVE DEMO / WEBCAM EXTRA CREDIT
+==================================================
+
+IMPORTANT CORRECTION TO THE PREVIOUS PLAN:
+
+DO NOT REMOVE LIVE CAMERA / LIVE STREAM MODE.
+
+The official hackathon instructions include live-stream/webcam inference as an EXTRA-CREDIT opportunity ("running demo on live stream or webcam").
+
+Therefore, inspect the official PDF/instructions carefully and implement this feature properly.
+
+The goal is to have a working, judge-friendly LIVE DEMO using either:
+
+1. Browser webcam
+2. Live/sample video stream
+
+The implementation must actually work end-to-end.
+
+--------------------------------------------------
+2.1 — VERIFY THE OFFICIAL REQUIREMENT
+--------------------------------------------------
+
+Before modifying the live feature:
+
+- Re-read the official hackathon PDF/instructions.
+- Locate the exact section describing extra credit for:
+  "running demo on live stream or webcam"
+  or equivalent wording.
+- Determine exactly what the organizers expect.
+- Do not assume that the current implementation satisfies it.
+- Use the official instructions as the source of truth.
+
+In the final report, explicitly state:
+- what the official extra-credit requirement asks for;
+- how our implementation satisfies it;
+- what limitations remain, if any.
+
+--------------------------------------------------
+2.2 — IMPLEMENT WORKING WEBCAM MODE
+--------------------------------------------------
+
+The existing Live Camera / Live Stream implementation may be incomplete or broken.
+
+Fix or rebuild it as necessary, but keep the architecture simple.
+
+The browser should be able to:
+
+1. Open the Live Demo.
+2. Request webcam permission.
+3. Start the camera.
+4. Send/process frames through the inference backend.
+5. Display the live video.
+6. Display YOLO detections.
+7. Display tracker IDs.
+8. Display tracking boxes/trails where supported.
+9. Display relevant event detections.
+10. Display inference status / FPS / latency.
+11. Clearly indicate that this is LIVE inference.
+
+If the existing architecture already provides most of this functionality, reuse it instead of rewriting it.
+
+--------------------------------------------------
+2.3 — LIVE SAMPLE STREAM
+--------------------------------------------------
+
+Also keep a "sample stream" option if it is useful for demonstrating the extra-credit feature without requiring webcam permissions.
+
+For example:
+
+LIVE DEMO
+
+[ Use Webcam ]
+[ Run Sample Stream ]
+
+The sample stream must use the actual project model/inference pipeline where practical.
+
+Do not fake live inference with pre-rendered results.
+
+--------------------------------------------------
+2.4 — GPU / SERVER COMPATIBILITY
+--------------------------------------------------
+
+The live demo must work when the backend is running on the remote NVIDIA B200 server.
+
+The intended architecture is:
+
+Browser
+   ↓
+Cloudflare Tunnel
+   ↓
+FastAPI backend on B200 server
+   ↓
+GPU inference
+   ↓
+WebSocket/SSE/HTTP streaming mechanism
+   ↓
+Browser
+
+Choose the simplest reliable transport compatible with the existing architecture.
+
+Do not introduce unnecessary infrastructure.
+
+The live endpoint must not depend on localhost-only assumptions.
+
+The backend must be able to bind to 0.0.0.0 for deployment.
+
+--------------------------------------------------
+2.5 — WEBCAM SECURITY / BROWSER REQUIREMENTS
+--------------------------------------------------
+
+Because browser webcam APIs normally require a secure context:
+
+- make sure the production setup works over HTTPS through Cloudflare Tunnel;
+- do not attempt to bypass browser security restrictions;
+- explain that localhost can work without HTTPS during local development;
+- production webcam access must use the HTTPS Cloudflare URL.
+
+Do NOT put Cloudflare credentials/tokens in the repository.
+
+--------------------------------------------------
+2.6 — PERFORMANCE / SAFETY
+--------------------------------------------------
+
+Do not process every browser frame blindly if that would overload the server.
+
+Implement reasonable frame throttling / sampling if needed.
+
+Show useful live telemetry such as:
+
+- FPS
+- inference latency
+- frames processed
+- active tracks
+- detected events
+
+Do not invent telemetry values.
+
+Use measured values from the actual system.
+
+The live demo should remain responsive and should not block normal uploaded-video inference.
+
+If the existing server already has a single-inference lock/queue, respect it.
+
+--------------------------------------------------
+2.7 — LIVE DEMO FAILURE STATES
+--------------------------------------------------
+
+Handle these cases cleanly:
+
+- camera permission denied;
+- camera unavailable;
+- backend unavailable;
+- inference busy;
+- network disconnect;
+- invalid stream/frame;
+- unsupported browser;
+- stopping the live demo.
+
+The UI should show a clear error instead of silently failing.
+
+When the user stops the camera:
+
+- stop the MediaStream tracks;
+- stop sending frames;
+- clear stale detections;
+- release any live inference resources;
+- return the UI to a clean stopped state.
+
+--------------------------------------------------
+2.8 — DO NOT BREAK THE NORMAL DEMO
+--------------------------------------------------
+
+The normal required workflow remains the priority:
+
+UPLOAD VIDEO
+→ PROCESS
+→ EVENTS
+→ TIMELINE
+→ PLAYBACK
+→ OVERLAY
+→ RISK CURVE
+→ RESULTS
+
+Live webcam is an EXTRA-CREDIT feature.
+
+Do not allow live-mode work to break:
+- sample playback;
+- uploaded-video inference;
+- event timeline;
+- risk curve;
+- overlays;
+- results;
+- existing sample data;
+- evaluation.
+
+--------------------------------------------------
+2.9 — TEST THE ACTUAL LIVE FEATURE
+--------------------------------------------------
+
+Do not merely check that the Live Demo button exists.
+
+Actually test the live functionality.
+
+At minimum verify:
+
+1. Live Demo opens.
+2. Webcam permission flow works.
+3. Webcam frames reach the backend.
+4. Backend performs actual inference.
+5. Detections appear.
+6. Tracker IDs appear if supported.
+7. Live telemetry updates.
+8. Stop works correctly.
+9. Restart works correctly.
+10. Normal upload demo still works afterward.
+
+If a real physical webcam cannot be accessed in the current environment, use an appropriate browser test/fake camera or sample stream to validate the complete code path, and clearly report what was and was not physically verified.
+
+Do NOT claim webcam functionality was physically tested if it wasn't.
+
+--------------------------------------------------
+2.10 — EXTRA-CREDIT UI
+--------------------------------------------------
+
+Make the live feature obvious to a hackathon judge.
+
+The UI should clearly communicate:
+
+LIVE DEMO
+Webcam / Stream
+GPU inference
+FPS
+Latency
+Tracks
+Events
+
+But do not over-design it or add unnecessary UI.
+
+The feature should feel like part of the same computer-vision system as the normal demo.
+
+--------------------------------------------------
+2.11 — FINAL RUBRIC AUDIT
+--------------------------------------------------
+
+When checking the official rubric/extra-credit criteria later in this task:
+
+Explicitly include:
+
+[CHECK] Live stream / webcam extra-credit criterion
+
+Verify it against the actual implementation and actual behavior.
+
+If the implementation satisfies the criterion, mark it as implemented.
+
+If something cannot be verified because the current environment lacks a real webcam/network setup, mark the code path as implemented but clearly distinguish that from physical end-to-end verification.
+
+Do not fabricate successful live-camera testing.
+ 9. EXTRA-CREDIT LIVE DEMO
+   - exact official extra-credit wording/requirement;
+   - webcam implementation;
+   - sample-stream implementation;
+   - actual inference path;
+   - GPU/server compatibility;
+   - what was physically tested;
+   - what was browser/fake-camera tested;
+   - any remaining limitations.  
