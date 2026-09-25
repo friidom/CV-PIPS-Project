@@ -35,7 +35,7 @@ $PY -m pip install -r server/requirements.txt "torch==$($PY -c 'import torch; pr
 (cd web && npm ci --no-audit --no-fund && npm run build)
 
 # 4. start it; one worker, because jobs and live sessions live in the process's memory
-DEMO_MAX_UPLOAD_MB=95 OMP_NUM_THREADS=16 nohup $PY -m uvicorn server.app:app \
+OMP_NUM_THREADS=16 nohup $PY -m uvicorn server.app:app \
     --host 0.0.0.0 --port 8000 --workers 1 --timeout-keep-alive 75 > server.log 2>&1 &
 echo $! > server.pid
 
@@ -52,9 +52,10 @@ repository) at `http://localhost:8000`. Notes for this setup:
 
 - **Binding.** `--host 0.0.0.0` accepts connections on every interface; when cloudflared
   runs on the same machine, `--host 127.0.0.1` is enough and exposes nothing else.
-- **Uploads.** Cloudflare refuses request bodies over 100 MB on its free plan, hence
-  `DEMO_MAX_UPLOAD_MB=95`; the page reads that limit from `/api/capabilities` and checks
-  files before sending them.
+- **Uploads.** The server sets no file-size limit, only a clip-length one
+  (`DEMO_MAX_DURATION_SEC`, which the page reads from `/api/capabilities`). Cloudflare
+  still refuses request bodies over 100 MB on its free plan, so a larger file fails at
+  the tunnel with its 413 before the server sees it.
 - **Webcam.** Browsers allow the camera only on a secure origin: the Cloudflare
   `https://` URL in production, or `http://localhost` during development. There is no
   way (and no attempt) around that.
@@ -150,8 +151,7 @@ All optional. On a Space set them under Settings → *Variables*.
 | `REPO_URL` | this repo on GitHub | build arg: repository to clone |
 | `TORCH_INDEX` | CPU wheels | build arg: `https://download.pytorch.org/whl/cu128` on a GPU Space |
 | `GITHUB_TOKEN` (secret) | — | build secret: only while the repository is private |
-| `DEMO_MAX_UPLOAD_MB` | `200` | largest accepted upload; rejected from `Content-Length` before the body is read |
-| `DEMO_MAX_DURATION_SEC` | `120` | longest accepted clip (the task asks for "2 minutes is enough") |
+| `DEMO_MAX_DURATION_SEC` | `120` | longest accepted clip in seconds, rejected with a 413 after upload (the task asks for "2 minutes is enough"); `0` turns the limit off. There is no file-size limit |
 | `DEMO_MAX_QUEUE` | `3` | uploads allowed to wait behind the running one; more get a 503 "try again" |
 | `DEMO_CORS_ORIGINS` | `*` | only matters for a split deployment (below) |
 | `OMP_NUM_THREADS` | `$CPU_CORES` | torch threads; Spaces export `CPU_CORES`, so leave it |
@@ -198,10 +198,10 @@ Switch back to CPU Basic after judging to stop billing.
 
 ### How requests are handled
 
-- **Uploads:** `POST /api/jobs` (multipart field `file`, `.mp4` only). Oversized bodies
-  are refused from the `Content-Length` header before anything is written; the clip is
-  then streamed to a temp directory, probed with PyAV, and rejected (and deleted) if
-  unreadable or longer than the limit. The browser shows upload progress.
+- **Uploads:** `POST /api/jobs` (multipart field `file`, `.mp4` only). The server has no
+  file-size limit (behind Cloudflare, the tunnel's own 100 MB cap still applies); the clip
+  is streamed to a temp directory, probed with PyAV, and rejected (and deleted) if
+  unreadable or longer than `DEMO_MAX_DURATION_SEC`. The browser shows upload progress.
 - **Queue:** one worker runs one clip at a time (the pipeline already uses every core);
   up to `DEMO_MAX_QUEUE` wait behind it. Live mode pauses while an upload runs.
 - **Results:** kept in memory with the browser-playable H.264 copy

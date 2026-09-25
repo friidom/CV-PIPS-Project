@@ -218,7 +218,7 @@ export interface ServerCapabilities {
   gpu: string | null;
   detector: string;
   risk_detector: string;
-  max_upload_bytes: number;
+  /** Longest accepted clip in seconds; 0 = no limit. */
   max_duration_sec: number;
   classes: string[];
   queue_depth: number;

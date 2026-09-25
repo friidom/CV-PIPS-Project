@@ -200,8 +200,8 @@ the alternative [`deploy/Dockerfile`](deploy/Dockerfile) image on a Hugging Face
 (the website image, not the submission's install path). For a split deployment (static
 host + separate API), set `VITE_API_BASE` at build time and `DEMO_CORS_ORIGINS` on the server.
 
-Demo limits are `DEMO_MAX_UPLOAD_MB` (default 200; use 95 behind Cloudflare, which caps
-request bodies at 100 MB), `DEMO_MAX_DURATION_SEC` (default 120) and `DEMO_MAX_QUEUE`
+Demo limits are `DEMO_MAX_DURATION_SEC` (default 120; `0` turns it off; there is no
+file-size limit, though Cloudflare caps request bodies at 100 MB) and `DEMO_MAX_QUEUE`
 (default 3); `GET /api/health` is the uptime probe and `GET /api/capabilities` reports
 the device and GPU the models loaded on.
 

@@ -79,8 +79,8 @@ export default function Demo() {
     [result],
   );
 
-  const maxMb = caps ? Math.round(caps.max_upload_bytes / (1024 * 1024)) : 200;
-  const maxSec = caps?.max_duration_sec ?? 120;
+  // Longest clip the server accepts; 0 means no limit, undefined until the server answers.
+  const maxSec = caps?.max_duration_sec;
 
   const start = useCallback(
     async (file: File) => {
@@ -89,11 +89,6 @@ export default function Demo() {
 
       if (!/\.mp4$/i.test(file.name)) {
         setError("Only .mp4 files are accepted.");
-        setPhase("error");
-        return;
-      }
-      if (caps && file.size > caps.max_upload_bytes) {
-        setError(`${file.name} is ${bytes(file.size)}; the limit is ${maxMb} MB.`);
         setPhase("error");
         return;
       }
@@ -149,7 +144,7 @@ export default function Demo() {
         window.clearInterval(poll);
       };
     },
-    [caps, maxMb],
+    [],
   );
 
   const resetRun = () => {
@@ -253,8 +248,15 @@ export default function Demo() {
                   <UploadMark />
                   <h2 className="mt-4 text-lg font-semibold">Drop an .mp4 here</h2>
                   <p className="mt-1.5 max-w-sm text-sm leading-relaxed text-muted">
-                    Up to <span className="num">{maxMb}&nbsp;MB</span> and{" "}
-                    <span className="num">{Math.round(maxSec)}&nbsp;seconds</span>. Footage from this
+                    {maxSec !== undefined &&
+                      (maxSec > 0 ? (
+                        <>
+                          Up to <span className="num">{Math.round(maxSec)}&nbsp;seconds</span>.{" "}
+                        </>
+                      ) : (
+                        "No length limit. "
+                      ))}
+                    Footage from this
                     fixed camera gives the most meaningful result &mdash; the geometric rules are tied
                     to its scene layout.
                   </p>
@@ -500,8 +502,7 @@ export default function Demo() {
                     <Row k="Device" v={caps.gpu ?? caps.device} />
                     <Row k="Part A model" v={caps.detector} />
                     <Row k="Part B model" v={caps.risk_detector} />
-                    <Row k="Max upload" v={`${maxMb} MB`} />
-                    <Row k="Max length" v={`${Math.round(maxSec)} s`} />
+                    <Row k="Max length" v={caps.max_duration_sec > 0 ? `${Math.round(caps.max_duration_sec)} s` : "no limit"} />
                     <Row k="Queue" v={`${caps.queue_depth} waiting`} />
                     <Row k="Classes" v={`${caps.classes.length} of 14`} />
                   </dl>
