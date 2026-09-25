@@ -22,15 +22,16 @@ def pedestrian_samples(ctx: EventContext, tr: Trajectory) -> np.ndarray | None:
     return ~covered
 
 
-def jaywalking(ctx: EventContext, min_dur: float = 1.5, max_gap: float = 1.0, min_depth: float = 20.0,
-               min_travel: float = 60.0, evidence: list[Evidence] | None = None) -> list[tuple[float, float]]:
+def jaywalking(ctx: EventContext, min_dur: float = 1.5, max_gap: float = 1.0, enter: float = 0.25,
+               min_depth: float = 1.0, min_travel: float = 1.0,
+               evidence: list[Evidence] | None = None) -> list[tuple[float, float]]:
     """Pedestrian walking on the carriageway outside the crossings.
 
-    Detected with a tolerance margin around the crossings; the person must get
-    ``min_depth`` px away from kerbs and crossings and walk ``min_travel`` px (a static
-    false detection or someone standing at the kerb is not jaywalking). Boundaries are
-    then widened to the whole stay on the road outside the painted crossing, i.e. from
-    stepping off the kerb / the zebra to stepping back.
+    Distances are in the person's own body heights, so the test means the same near the
+    camera and far away: the person must get ``min_depth`` heights away from both the kerbs
+    and the painted crossings (walking right beside the zebra or along the kerb is not
+    jaywalking) and walk ``min_travel`` heights (a static false detection is not either).
+    Start / end = the person gets / comes back within ``enter`` heights of the kerb or zebra.
     """
     m = ctx.masks
     segs = []
@@ -38,23 +39,23 @@ def jaywalking(ctx: EventContext, min_dur: float = 1.5, max_gap: float = 1.0, mi
         walker = pedestrian_samples(ctx, tr)
         if walker is None:
             continue
-        depth = lookup(m.jaywalk_depth, tr.foot)
-        off_crossing = walker & (lookup(m.road_depth, tr.foot) > 0) & (lookup(m.crosswalk_any, tr.foot) == 0)
-        wide = mask_segments(tr.t, off_crossing, max_gap, 0.0)
-        for s, e in mask_segments(tr.t, (depth > 0) & walker, max_gap, min_dur):
+        height = np.maximum(tr.size, 1.0)
+        depth = lookup(m.jaywalk_depth, tr.foot) / height
+        for s, e in mask_segments(tr.t, (depth > enter) & walker, max_gap, min_dur):
             inside = (tr.t >= s) & (tr.t <= e)
             pts = tr.foot[inside]
-            if depth[inside].max() < min_depth or np.linalg.norm(pts.max(0) - pts.min(0)) < min_travel:
+            travel = np.linalg.norm(pts.max(0) - pts.min(0)) / np.median(height[inside])
+            if depth[inside].max() < min_depth or travel < min_travel:
                 continue
-            s, e = next(((ws, we) for ws, we in wide if ws <= s and e <= we), (s, e))
             segs.append((s, e))
             if evidence is not None:
                 evidence.append(Evidence(s, e, (tr.tid,), "pedestrian on the road"))
     return merge_segments(segs)
 
 
-def _pedestrians_by_frame(ctx: EventContext, min_depth: float) -> dict[int, tuple[np.ndarray, np.ndarray]]:
-    """Frame -> (foot points (n, 2), track ids (n,)) of pedestrians on foot >= ``min_depth`` px into the road.
+def _pedestrians_by_frame(ctx: EventContext, min_depth: float) -> dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Frame -> (foot points (n, 2), track ids (n,), body heights (n,)) of pedestrians on foot
+    >= ``min_depth`` px into the road.
 
     People waiting on the kerb at the end of a crossing are not "on" it.
     """
@@ -64,9 +65,9 @@ def _pedestrians_by_frame(ctx: EventContext, min_depth: float) -> dict[int, tupl
         if walker is None:
             continue
         on_road = walker & (lookup(ctx.masks.road_depth, tr.foot) >= min_depth)
-        for k, p in zip(ctx.frame_key(tr.t[on_road]), tr.foot[on_road]):
-            rows.setdefault(int(k), []).append((*p, tr.tid))
-    return {k: (np.asarray(v)[:, :2], np.asarray(v)[:, 2].astype(int)) for k, v in rows.items()}
+        for k, p, h in zip(ctx.frame_key(tr.t[on_road]), tr.foot[on_road], tr.size[on_road]):
+            rows.setdefault(int(k), []).append((*p, tr.tid, h))
+    return {k: (np.asarray(v)[:, :2], np.asarray(v)[:, 2].astype(int), np.asarray(v)[:, 3]) for k, v in rows.items()}
 
 
 def _strip_overlap(integral: np.ndarray, box: np.ndarray, frac: float = 0.35) -> np.ndarray:
@@ -88,10 +89,11 @@ def _distance_to_box(p: np.ndarray, box: np.ndarray) -> np.ndarray:
     return np.hypot(dx, dy)
 
 
-def failure_to_yield(ctx: EventContext, min_overlap: float = 0.15, near_px: float = 80.0,
+def failure_to_yield(ctx: EventContext, min_overlap: float = 0.15, near: float = 0.5,
                      ped_margin: int = 10, ped_depth: float = 12.0, min_speed: float = 0.3,
                      max_pass: float = 4.0, evidence: list[Evidence] | None = None) -> list[tuple[float, float]]:
-    """Vehicle drives over a crossing while a pedestrian on that crossing is right next to its path.
+    """Vehicle drives over a crossing while a pedestrian on that crossing is right next to its path
+    (within ``near`` of the pedestrian's body heights of the vehicle's ground footprint).
 
     Start/end = the vehicle footprint enters / leaves the crossing. A pass longer than
     ``max_pass`` s is a vehicle standing on the crossing (queue), not driving through it.
@@ -113,10 +115,10 @@ def failure_to_yield(ctx: EventContext, min_overlap: float = 0.15, near_px: floa
                 for i, k in zip(inside, ctx.frame_key(tr.t[inside])):
                     if int(k) not in peds:
                         continue
-                    pts, tids = peds[int(k)]
+                    pts, tids, heights = peds[int(k)]
                     x1, y1, x2, y2 = tr.box[i]
                     footprint = np.array([x1, y2 - 0.35 * (y2 - y1), x2, y2])
-                    close = (lookup(zone, pts) > 0) & (_distance_to_box(pts, footprint) < near_px)
+                    close = (lookup(zone, pts) > 0) & (_distance_to_box(pts, footprint) < near * heights)
                     if close.any():
                         segs.append((s, e))
                         if evidence is not None:

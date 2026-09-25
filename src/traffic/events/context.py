@@ -14,6 +14,11 @@ from ..tracker import GROUP_PERSON, GROUP_TWO_WHEELER, GROUP_VEHICLE
 from ..trajectories import Trajectory
 
 
+# the junction: past the east-bound stop line, before the west-bound crossing, the box and its exit
+# (plus the painted crossings); vehicles standing here are finishing a manoeuvre, yielding or stuck
+JUNCTION_ZONES = ("eb_stop", "wb_approach", "box", "eb_exit")
+
+
 class Evidence(NamedTuple):
     """Why a rule fired: the raw (pre-merge) segment, the track ids involved and a short note."""
     start: float
@@ -28,22 +33,26 @@ class SceneMasks:
     road: np.ndarray
     crosswalk: dict[str, np.ndarray]
     crosswalk_any: np.ndarray      # union of the painted crossings
-    crosswalk_margin: np.ndarray   # any crosswalk dilated: tolerance for people walking beside the stripes
     road_depth: np.ndarray         # float32 distance (px) from the nearest kerb; 0 off the carriageway
-    jaywalk_depth: np.ndarray      # same, but crossings (with margin) also count as "off": 0 = not jaywalking ground
-    zone: dict[str, np.ndarray]    # traffic direction zones (eb_approach, eb_exit, wb)
+    jaywalk_depth: np.ndarray      # float32 distance (px) from the nearest kerb or painted crossing; 0 on either
+    zone: dict[str, np.ndarray]    # traffic zones: eb_approach, eb_stop (stop line -> crossing), wb_approach, box, eb_exit, wb, wb_near
+    junction: np.ndarray           # JUNCTION_ZONES and the crossings
+    exit: dict[str, np.ndarray]    # exit regions of the junction legs (scene "exits")
 
     @classmethod
-    def build(cls, scene: Scene, margin: int = 35) -> "SceneMasks":
+    def build(cls, scene: Scene) -> "SceneMasks":
         road = np.ones(REF_SIZE[::-1], np.uint8)
         cv2.fillPoly(road, [p.astype(np.int32) for p in list(scene.sidewalks.values()) + list(scene.islands.values())], 0)
         crosswalk = {k: scene.mask([p]) for k, p in scene.crosswalks.items()}
-        margin_mask = scene.mask(list(scene.crosswalks.values()), dilate=margin)
-        return cls(road=road, crosswalk=crosswalk, crosswalk_any=scene.mask(list(scene.crosswalks.values())),
-                   crosswalk_margin=margin_mask,
+        crosswalk_any = scene.mask(list(scene.crosswalks.values()))
+        zone = {k: scene.mask([p]) for k, p in scene.zones.items()}
+        junction = crosswalk_any.copy()
+        for name in JUNCTION_ZONES:
+            junction |= zone[name]
+        return cls(road=road, crosswalk=crosswalk, crosswalk_any=crosswalk_any,
                    road_depth=cv2.distanceTransform(road, cv2.DIST_L2, 5),
-                   jaywalk_depth=cv2.distanceTransform(road & (1 - margin_mask), cv2.DIST_L2, 5),
-                   zone={k: scene.mask([p]) for k, p in scene.zones.items()})
+                   jaywalk_depth=cv2.distanceTransform(road & (1 - crosswalk_any), cv2.DIST_L2, 5),
+                   zone=zone, junction=junction, exit={k: scene.mask([p]) for k, p in scene.exits.items()})
 
 
 @dataclass

@@ -7,7 +7,7 @@ every video gets a homography video->reference estimated from SIFT matches.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -86,6 +86,9 @@ class Scene:
     sidewalks: dict[str, np.ndarray]
     zones: dict[str, np.ndarray]
     signals: dict[str, dict]
+    lane_lines: dict[str, np.ndarray] = field(default_factory=dict)  # (n, 2, 2): solid part of each lane line, upstream end -> stop line
+    lane_rules: dict[str, dict[int, list[str]]] = field(default_factory=dict)  # lane (1 = kerb) -> allowed exits
+    exits: dict[str, np.ndarray] = field(default_factory=dict)       # exit regions of the junction legs
     reference: np.ndarray | None = None
     flow: FlowField | None = None
 
@@ -102,6 +105,9 @@ class Scene:
             sidewalks=arr(cfg["sidewalks"]),
             zones=arr(cfg["zones"]),
             signals=cfg["signals"],
+            lane_lines=arr(cfg.get("lane_lines", {})),
+            lane_rules={k: {int(lane): exits for lane, exits in v.items()} for k, v in cfg.get("lane_rules", {}).items()},
+            exits=arr(cfg.get("exits", {})),
             reference=cv2.imread(str(ref_path)) if ref_path.exists() else None,
             flow=FlowField.load(flow_path) if flow_path.exists() else None,
         )

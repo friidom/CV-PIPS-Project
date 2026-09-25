@@ -71,6 +71,8 @@ export interface Manifest {
   eda: Record<string, AssetState & { path?: string }>;
   metrics: AssetState;
   summary?: ManifestSummary;
+  /** Set when the event-dependent files were re-derived for newer rules without a new perception pass. */
+  events_refresh?: { at: string; note: string };
 }
 
 export interface FlowFieldData {
@@ -102,6 +104,8 @@ export interface SceneData {
   islands: ScenePolygon[];
   sidewalks: ScenePolygon[];
   zones: ScenePolygon[];
+  /** Solid part of each east-bound lane line (upstream end, stop-line end); absent in older data. */
+  lane_lines?: ScenePolygon[];
   signals: { name: string; lamps: { name: string; x: number; y: number; r: number }[] }[];
 }
 
@@ -204,6 +208,12 @@ export interface JobResult extends JobProgress {
 
 export interface ServerCapabilities {
   ok: boolean;
+  /** Models still loading after a (cold) start; the upload box works, the job just waits. */
+  loading?: boolean;
+  detail?: string | null;
+  busy?: boolean;
+  /** The last finished job on this server, for an honest wait estimate. */
+  last_run?: { duration: number; total_sec: number; device: string | null } | null;
   device: string;
   gpu: string | null;
   detector: string;

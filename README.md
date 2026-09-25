@@ -4,8 +4,8 @@ Traffic events from a fixed road camera: **detect** them as time segments
 (`[start_sec, end_sec, label]`) and, causally, **anticipate** accidents with a
 per-frame risk score.
 
-Team **wiut-cv**. Website: see [`web/`](web) (run it locally with the commands at
-the bottom, or deploy the built site plus `server/app.py` on one host).
+Team **wiut-cv**. Website: see [`web/`](web); it is deployed as one Docker container
+(site + live-demo API) following [`deploy/README.md`](deploy/README.md).
 
 ## What we run
 
@@ -39,7 +39,7 @@ One learned component, everything else explainable.
 ```
 video → sampled decode (reference frames only) → YOLO11m → Kalman/IoU tracker
       → SIFT homography to a reference frame → scene masks + signal phase
-      → 8 event rules → merge / split / length filter → segments
+      → 10 event rules → merge / split / length filter → segments
 
 frames → YOLO11s (every 5th) → online tracks → TTC conflict + red-runner
        → braking → noisy-OR → fast attack / slow decay → risk score
@@ -51,7 +51,7 @@ frames → YOLO11s (every 5th) → online tracks → TTC conflict + red-runner
 | Tracking (ByteTrack-style IoU over a Kalman filter) | rule-based | `src/traffic/tracker.py`, `tracks.py` |
 | Scene alignment (CLAHE + SIFT + MAGSAC homography) | rule-based | `src/traffic/scene.py` |
 | Signal phase from lamp pixels | rule-based | `src/traffic/signals.py` |
-| 8 event rules | rule-based | `src/traffic/events/` |
+| 10 event rules (two of them lane rules on the east-bound approach) | rule-based | `src/traffic/events/` |
 | Segment merging, hand-over splitting, blip removal | post-processing | `src/traffic/intervals.py` |
 | Accident risk (conflict / red-runner / braking cues) | rule-based | `src/traffic/risk.py` |
 
@@ -63,15 +63,17 @@ budget. Details and the reasoning behind each threshold are on the website's
 
 ### Classes we predict
 
-`CLASSES` in `solution.py` lists **8 of the 14** official ids:
+`CLASSES` in `solution.py` lists **10 of the 14** official ids:
 
 ```
-red_light  wrong_way  illegal_u_turn  stopped_vehicle
-jaywalking  failure_to_yield  stop_line  congestion
+red_light  wrong_way  illegal_u_turn  stopped_vehicle  jaywalking
+failure_to_yield  illegal_turn  solid_line_crossing  stop_line  congestion
 ```
 
-Not predicted: `accident`, `near_miss`, `illegal_turn`, `solid_line_crossing`,
-`road_obstacle`, `fire_smoke`. The task permits removing ids and forbids adding
+`illegal_turn` and `solid_line_crossing` measure lanes against the lane lines and the
+turn-permission table drawn for the east-bound approach in `configs/scene.json`.
+
+Not predicted: `accident`, `near_miss`, `road_obstacle`, `fire_smoke`. The task permits removing ids and forbids adding
 them; since a predicted class that never matches is folded into the Score A class
 average as a zero, emitting ids we cannot detect would only lower the score.
 
@@ -107,8 +109,8 @@ Known problems, all visible in `predictions_samples.json` without any labels:
 
 - `stopped_vehicle` segments span most of a clip — a parked car the rule cannot
   distinguish from a stopped one;
-- 34 of 119 events are shorter than 1 s, which will not survive matching at IoU 0.7;
-- 6 of 14 classes are never produced;
+- 25 of 129 events are shorter than 1 s, which will not survive matching at IoU 0.7;
+- 4 of 14 classes are never predicted, and `wrong_way` / `illegal_u_turn` never fire on these clips;
 - Part B peaks at 0.558 on `C3902` and 0.523 on `C3896`, so it does cross θ = 0.5 and
   raise alarms, but with no labels we cannot say whether those alarms are correct;
   on `C3897` (0.384) and `C3905` (0.313) it never fires;
@@ -137,7 +139,7 @@ src/traffic/                the pipeline
   ├── scene.py              geometry, homography, flow field
   ├── signals.py            signal phase from lamp pixels
   ├── intervals.py          run-length and segment helpers
-  ├── events/               the 8 event rules
+  ├── events/               the 10 event rules
   ├── risk.py               Part B causal risk model
   └── pipeline.py           Part A end to end
 tools/                      dev tooling: caching, rendering, labelling, calibration
@@ -191,11 +193,15 @@ npm run build      # production build into web/dist
 ```
 
 `server/app.py` serves `web/dist` when that directory exists, so a production
-deployment is a single origin: build the frontend, then run uvicorn. For a split
-deployment (static host + separate API), set `VITE_API_BASE` at build time.
+deployment is a single origin: build the frontend, then run uvicorn.
+[`deploy/Dockerfile`](deploy/Dockerfile) does both in one image (it is the website
+image, not the submission's install path) and [`deploy/README.md`](deploy/README.md)
+walks through hosting it on a Hugging Face Space, the environment variables, expected
+CPU speed and keeping it online. For a split deployment (static host + separate API),
+set `VITE_API_BASE` at build time and `DEMO_CORS_ORIGINS` on the server.
 
-Demo limits are `DEMO_MAX_UPLOAD_MB` (default 200) and `DEMO_MAX_DURATION_SEC`
-(default 120). Live mode (`/demo#live`) streams webcam frames, or a sample clip played
+Demo limits are `DEMO_MAX_UPLOAD_MB` (default 200), `DEMO_MAX_DURATION_SEC`
+(default 120) and `DEMO_MAX_QUEUE` (default 3); `GET /api/health` is the uptime probe. Live mode (`/demo#live`) streams webcam frames, or a sample clip played
 in real time, to `POST /api/live/{session}` for detection and tracking only (the event
 rules need whole-clip context); it pauses whenever an upload is being analysed.
 
@@ -205,5 +211,11 @@ explicit "not available" card in its place.
 
 ## Team
 
-Members, roles and links live in `web/src/content/team.ts` and are rendered on the
-website's Team page.
+| member | role | who did what | links |
+|---|---|---|---|
+| _name — to fill in_ | _role_ | _what they built, in one or two sentences_ | [GitHub](#) · [LinkedIn](#) · [portfolio](#) |
+| _name — to fill in_ | _role_ | _what they built, in one or two sentences_ | [GitHub](#) · [LinkedIn](#) · [portfolio](#) |
+| _name — to fill in_ | _role_ | _what they built, in one or two sentences_ | [GitHub](#) · [LinkedIn](#) · [portfolio](#) |
+
+The website's Team page renders the same information, plus each member's previous
+projects, from `web/src/content/team.ts`; keep the two in sync.

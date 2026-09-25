@@ -1,0 +1,18 @@
+# Keeps the demo Space from sleeping (CPU Basic sleeps after 48 h without visitors).
+# Does nothing until the repository variable DEMO_URL is set, e.g.
+# https://<user>-<space>.hf.space  (Settings → Secrets and variables → Actions → Variables).
+name: keep demo awake
+
+on:
+  schedule:
+    - cron: "17 */12 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    if: ${{ vars.DEMO_URL != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS --retry 5 --retry-delay 30 --max-time 60 "${{ vars.DEMO_URL }}/api/health"

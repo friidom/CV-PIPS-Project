@@ -4,7 +4,7 @@ import { BarList } from "../components/charts";
 import { Callout, DataGap, Panel, Section, Stat } from "../components/ui";
 import { loadData } from "../lib/api";
 import { findAlarms, THETA } from "../components/RiskCurve";
-import { byClassOrder, classColor } from "../lib/classes";
+import { byClassOrder, CLASSES, classColor, IMPLEMENTED_CLASSES } from "../lib/classes";
 import { timecode } from "../lib/format";
 import type { Manifest, SampleData } from "../lib/types";
 
@@ -15,12 +15,19 @@ export default function Results() {
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [sample, setSample] = useState<SampleData | null>(null);
   const [clip, setClip] = useState("C3905");
+  // Classes emitted on any of the four clips; null until all four are loaded.
+  const [emitted, setEmitted] = useState<Set<string> | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
     void loadData<Manifest>("manifest.json", ac.signal).then(setManifest);
+    void Promise.all(CLIPS.map((id) => loadData<SampleData>(`samples/${id}.json`, ac.signal))).then((rows) => {
+      if (rows.every(Boolean)) setEmitted(new Set(rows.flatMap((r) => r!.events.map((e) => e[2]))));
+    });
     return () => ac.abort();
   }, []);
+  const silent = emitted ? IMPLEMENTED_CLASSES.map((c) => c.id).filter((id) => !emitted.has(id)) : [];
+  const missing = CLASSES.filter((c) => c.rule === null).map((c) => c.id);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -247,7 +254,7 @@ export default function Results() {
                       {" "}
                       {analysis.viaSpanning.get(analysis.overlaps[0][0])} of them involve the{" "}
                       <span className="num">{analysis.spanning[0][2]}</span> segment spanning over 90% of the
-                      clip &mdash; the near-certain false positive described below, not a pattern in the
+                      clip &mdash; the probable false positive described below, not a pattern in the
                       traffic.
                     </>
                   )}
@@ -268,7 +275,7 @@ export default function Results() {
             {analysis.spanning.length > 0 && (
               <Panel className="p-5">
                 <div className="num text-[10px] uppercase tracking-[0.14em] text-bad">
-                  Near-certain false positive
+                  Probable false positive &middot; unverified without labels
                 </div>
                 <h3 className="mt-2 text-sm font-semibold">
                   A {analysis.spanning[0][2]} spanning the whole clip
@@ -279,9 +286,10 @@ export default function Results() {
                   {sample.meta.duration.toFixed(0)} s clip
                 </p>
                 <p className="mt-2.5 text-[13px] leading-relaxed text-muted">
-                  A vehicle standing still for the entire recording is parked, not &ldquo;stopped on the
-                  carriageway&rdquo;. The rule already excludes signal queues, bus dwell and vehicles
-                  inside a congestion event, but it has no notion of a legal parking bay, and{" "}
+                  A vehicle standing still for the entire recording is most likely parked rather than
+                  &ldquo;stopped on the carriageway&rdquo; &mdash; a judgement from watching the render, not a
+                  labelled fact. The rule already excludes signal queues, bus dwell, stops inside the
+                  junction and vehicles inside a congestion event, but it has no notion of a legal parking bay, and{" "}
                   <span className="num">stitch_parked</span> deliberately joins fragments of one
                   standing vehicle &mdash; which makes this segment longer, not shorter. A static-object
                   mask learned from the median background would remove it.
@@ -315,13 +323,22 @@ export default function Results() {
 
             <Panel className="p-5">
               <div className="num text-[10px] uppercase tracking-[0.14em] text-bad">Coverage</div>
-              <h3 className="mt-2 text-sm font-semibold">Six classes are never produced</h3>
+              <h3 className="mt-2 text-sm font-semibold">{missing.length} classes are never produced</h3>
               <p className="mt-2.5 text-[13px] leading-relaxed text-muted">
-                accident, near_miss, illegal_turn, solid_line_crossing, road_obstacle and fire_smoke.
+                {missing.slice(0, -1).join(", ")} and {missing[missing.length - 1]}.
                 If any of them occurs in the hidden test set it contributes a zero to the class average
                 in Score&nbsp;A, and there is nothing the rest of the pipeline can do about it. This is
                 the single largest known cost in our model score.
               </p>
+              {silent.length > 0 && (
+                <p className="mt-2 text-[13px] leading-relaxed text-muted">
+                  {silent.length === 1 ? "One more has a rule but never fires" : `${silent.length} more have a rule but never fire`} on
+                  any of the four sample clips:{" "}
+                  <span className="num">{silent.join(", ")}</span>. That is consistent with none occurring in
+                  this footage, and equally with a threshold set too strictly &mdash; without labels we cannot tell
+                  which.
+                </p>
+              )}
               <Link to="/classes" className="mt-3 inline-block text-xs text-accent underline-offset-4 hover:underline">
                 Per-class reasoning &rarr;
               </Link>

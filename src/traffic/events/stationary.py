@@ -5,7 +5,7 @@ import numpy as np
 
 from ..intervals import mask_segments, merge_segments
 from ..scene import lookup
-from ..signals import AMBER, GREEN, RED
+from ..signals import AMBER, RED
 from ..detector import BUS
 from ..trajectories import Trajectory
 from .context import EventContext, Evidence
@@ -54,7 +54,10 @@ def stopped_vehicle(ctx: EventContext, min_stop: float = 10.0, queue_radius: flo
                     queue_size: int = 3, evidence: list[Evidence] | None = None) -> list[tuple[float, float]]:
     """Vehicle stationary on the carriageway for >= ``min_stop`` s outside a queue or a jam.
 
-    Not counted: stops in the east-bound approach that overlap red/amber (signal queue),
+    Not counted: stops inside the junction (``masks.junction``: past the stop line, on the
+    crossings, in the box and at its exits) - a vehicle there is finishing a manoeuvre,
+    yielding or held up by traffic; stops in the east-bound approach that overlap red/amber
+    (signal queue),
     buses dwelling in the west-bound lanes (bus stop), seconds in which the vehicle is part
     of a congestion event or has >= ``queue_size`` standing vehicles within ``queue_radius``
     of its sizes (a queue). A vehicle left standing after the jam around it clears counts
@@ -79,7 +82,7 @@ def stopped_vehicle(ctx: EventContext, min_stop: float = 10.0, queue_radius: flo
         for s, e in mask_segments(tr.t, mask, max_gap=3.0, min_len=min_stop):   # bridge detector dropouts
             i0 = min(int(np.searchsorted(tr.t, s)), len(tr.t) - 1)
             p = tr.foot[i0]
-            if tr.cls == BUS and lookup(ctx.masks.zone["wb"], p[None])[0]:
+            if lookup(ctx.masks.junction, p[None])[0] or (tr.cls == BUS and lookup(ctx.masks.zone["wb"], p[None])[0]):
                 continue
             during = (ctx.phase_t >= s) & (ctx.phase_t <= e)
             if lookup(ctx.masks.zone["eb_approach"], p[None])[0] and np.isin(ctx.phase[during], (RED, AMBER)).any():
@@ -116,19 +119,25 @@ def _neighbours(standing: tuple[np.ndarray, np.ndarray] | None, tid: int, p: np.
     return int(((np.linalg.norm(feet - p, axis=1) < radius) & (tids != tid)).sum())
 
 
-def congestion(ctx: EventContext, crawl: float = 0.35, min_vehicles: int = 4, min_frac: float = 0.6,
-               max_gap: float = 2.0, min_dur: float = 5.0, min_dur_wb: float = 12.0, green_grace: float = 12.0,
-               parked: float = 60.0,
-               evidence: list[Evidence] | None = None) -> list[tuple[float, float]]:
-    """Traffic of a direction at a standstill or crawling: in a zone, >= ``min_frac`` of
-    >= ``min_vehicles`` vehicles move slower than ``crawl`` sizes/s (median over a 1-s bin).
+CONGESTION_ZONES = ("box", "eb_exit", "wb_near")
 
-    Zones: the east-bound exit (backs up into the intersection), the west-bound carriageway
-    and the east-bound approach. A standing queue in the approach is normal on red; it
-    counts only when it still stands ``green_grace`` s into green (the queue does not clear).
-    West-bound traffic also halts for a few seconds while people use the crossing; there only
-    standstills of >= ``min_dur_wb`` s count. Vehicles standing for >= ``parked`` s at a stretch are parked or stopped, not traffic.
+
+def congestion(ctx: EventContext, crawl: float = 0.25, min_vehicles: int = 4,
+               max_gap: float = 2.0, min_dur: float = 8.0, parked: float = 60.0,
+               evidence: list[Evidence] | None = None) -> list[tuple[float, float]]:
+    """Traffic at a standstill or crawling inside the junction or past a crossing: in a zone,
+    >= ``min_vehicles`` vehicles whose median speed is below ``crawl`` sizes/s (per 1-s bin,
+    each vehicle's own median first). A queue that creeps forward faster ends the event.
+
+    Zones (``CONGESTION_ZONES``): the junction box past the east-bound crossing, the
+    east-bound exit and the west-bound carriageway just past its crossing, up to the bus
+    stop (buses dwelling there and the queue for the next junction far up the road are not
+    congestion here). Queues in front of a
+    stop line or a crossing are signal/pedestrian waits, not congestion (a vehicle stopped
+    past the stop line on red is ``stop_line``). Vehicles standing for >= ``parked`` s at a
+    stretch are parked or stopped, not traffic.
     Start = the queue stops moving; end = it clears (moves again or empties).
+    Evidence lists each vehicle with the seconds it was standing or crawling in the jam.
     """
     moving = {}
     for tr in ctx.vehicles:
@@ -138,10 +147,10 @@ def congestion(ctx: EventContext, crawl: float = 0.35, min_vehicles: int = 4, mi
         moving[tr.tid] = keep
     bins = np.arange(0.0, ctx.duration + 1.0)
     segs = []
-    for name, mask in ctx.masks.zone.items():
-        present = np.zeros(len(bins))
-        slow = np.zeros(len(bins))
-        slow_tids: dict[int, set[int]] = {}
+    for name in CONGESTION_ZONES:
+        mask = ctx.masks.zone[name]
+        speeds: list[list[float]] = [[] for _ in bins]
+        slow_bins: dict[int, list[int]] = {}
         for tr in ctx.vehicles:
             inside = (lookup(mask, tr.foot) > 0) & moving[tr.tid]
             if not inside.any():
@@ -149,31 +158,17 @@ def congestion(ctx: EventContext, crawl: float = 0.35, min_vehicles: int = 4, mi
             k = np.clip(tr.t[inside].astype(int), 0, len(bins) - 1)
             speed = tr.rel_speed(2.0)[inside]
             for b in np.unique(k):   # one vote per vehicle and bin
-                present[b] += 1
-                if np.median(speed[k == b]) < crawl:
-                    slow[b] += 1
-                    slow_tids.setdefault(int(b), set()).add(tr.tid)
-        jam = (present >= min_vehicles) & (slow >= min_frac * np.maximum(present, 1))
-        if name == "eb_approach":
-            jam &= _seconds_into_green(ctx, bins) >= green_grace
-        found = mask_segments(bins, jam, max_gap=max_gap, min_len=min_dur_wb if name == "wb" else min_dur)
+                v = float(np.median(speed[k == b]))
+                speeds[b].append(v)
+                if v < crawl:
+                    slow_bins.setdefault(tr.tid, []).append(int(b))
+        jam = np.array([len(v) >= min_vehicles and np.median(v) < crawl for v in speeds])
+        # a bin covers [b, b + 1): the event ends with its last jammed bin
+        found = [(s, e + 1.0) for s, e in mask_segments(bins, jam, max_gap=max_gap, min_len=min_dur - 1.0)]
         segs += found
         if evidence is not None:
             for s, e in found:
-                tids = set().union(*(slow_tids.get(b, set()) for b in range(int(s), int(e) + 1)))
-                evidence.append(Evidence(s, e, tuple(sorted(tids)), f"traffic standing or crawling in {name}"))
+                for tid, tb in slow_bins.items():
+                    runs_in_jam = merge_segments([(b, b + 1.0) for b in tb if s <= b <= e], max_gap=1.0)
+                    evidence += [Evidence(vs, ve, (tid,), f"standing or crawling in {name}") for vs, ve in runs_in_jam]
     return merge_segments(segs)
-
-
-def _seconds_into_green(ctx: EventContext, times: np.ndarray) -> np.ndarray:
-    """Time since the current green started (0 when not green)."""
-    phase = ctx.phase_at(times)
-    out = np.zeros(len(times))
-    start = None
-    for i, (t, ph) in enumerate(zip(times, phase)):
-        if ph == GREEN:
-            start = t if start is None else start
-            out[i] = t - start
-        else:
-            start = None
-    return out

@@ -31,12 +31,35 @@ export async function getCapabilities(signal?: AbortSignal): Promise<ServerCapab
   return (await res.json()) as ServerCapabilities;
 }
 
-export async function submitVideo(file: File, signal?: AbortSignal): Promise<{ id: string }> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch(api("/api/jobs"), { method: "POST", body: form, signal });
-  if (!res.ok) throw new ApiError(await readError(res), res.status);
-  return (await res.json()) as { id: string };
+/** XHR rather than fetch: fetch cannot report upload progress, and a large clip takes a while to send. */
+export function submitVideo(
+  file: File,
+  onProgress?: (sent: number, total: number) => void,
+  signal?: AbortSignal,
+): Promise<{ id: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const form = new FormData();
+    form.append("file", file);
+    xhr.open("POST", api("/api/jobs"));
+    xhr.responseType = "json";
+    xhr.upload.onprogress = (e) => onProgress?.(e.loaded, e.lengthComputable ? e.total : file.size);
+    xhr.onload = () => {
+      const body = xhr.response as { id?: string; detail?: unknown } | null;
+      if (xhr.status >= 200 && xhr.status < 300 && body?.id) resolve({ id: body.id });
+      else
+        reject(
+          new ApiError(
+            typeof body?.detail === "string" ? body.detail : xhr.statusText || `upload failed (${xhr.status})`,
+            xhr.status,
+          ),
+        );
+    };
+    xhr.onerror = () => reject(new ApiError("The upload did not reach the inference server.", 0));
+    xhr.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(form);
+  });
 }
 
 export async function getJob(id: string, signal?: AbortSignal): Promise<JobProgress | JobResult> {

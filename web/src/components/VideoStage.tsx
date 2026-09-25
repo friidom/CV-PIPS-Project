@@ -104,7 +104,8 @@ export function VideoStage({
   useEffect(() => setFailed(false), [src]);
 
   useEffect(() => {
-    const on = () => setFull(Boolean(document.fullscreenElement));
+    // this player's wrapper, not any fullscreen element: `full` drives the layout below
+    const on = () => setFull(document.fullscreenElement !== null && document.fullscreenElement === wrapRef.current);
     document.addEventListener("fullscreenchange", on);
     return () => document.removeEventListener("fullscreenchange", on);
   }, []);
@@ -289,9 +290,12 @@ export function VideoStage({
       ref={wrapRef}
       tabIndex={0}
       onKeyDown={onKey}
-      className="brackets overflow-hidden rounded-xl border border-line bg-black focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      className={`brackets overflow-hidden bg-black focus:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+        // fullscreen: the browser sizes this wrapper to the viewport; the stage takes what the controls leave
+        full ? "flex flex-col" : "rounded-xl border border-line"
+      }`}
     >
-      <div className="relative bg-black">
+      <div className={full ? "relative min-h-0 flex-1 bg-black" : "relative bg-black"}>
         <video
           ref={ref}
           src={src}
@@ -302,7 +306,7 @@ export function VideoStage({
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
           onError={() => setFailed(true)}
           onClick={togglePlay}
-          className="block max-h-[62vh] w-full cursor-pointer bg-black object-contain"
+          className={`block w-full cursor-pointer bg-black object-contain ${full ? "h-full" : "max-h-[62vh]"}`}
         />
         {overlay && showOverlay && (
           <canvas

@@ -225,10 +225,10 @@ export default function Overview() {
         >
           <div className="grid gap-3 md:grid-cols-3">
             <HonestCard
-              title="6 classes have no detector"
+              title={`${CLASSES.length - IMPLEMENTED_CLASSES.length} classes have no detector`}
               to="/classes"
               cta="Per-class status"
-              body="accident, near_miss, illegal_turn, solid_line_crossing, road_obstacle and fire_smoke are never emitted. They are removed from CLASSES rather than guessed at, because a class you predict but never get right is averaged into Score A as a zero."
+              body={`${CLASSES.filter((c) => c.rule === null).map((c) => c.id).join(", ")} are never emitted. They are removed from CLASSES rather than guessed at, because a class you predict but never get right is averaged into Score A as a zero.`}
             />
             <HonestCard
               title="No Score A or Score B yet"
@@ -240,7 +240,7 @@ export default function Overview() {
               title="The rules assume this camera"
               to="/eda"
               cta="The scene it was built on"
-              body="Stop line, crossings, islands and lane directions are drawn once against a reference frame. Upload footage from somewhere else and the demo tells you the alignment failed instead of returning confident nonsense."
+              body="Stop line, lane lines, crossings, islands and lane directions are drawn once against a reference frame. Upload footage from somewhere else and the demo tells you the alignment failed instead of returning confident nonsense."
             />
           </div>
         </Section>

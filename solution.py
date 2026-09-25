@@ -36,8 +36,7 @@ os.environ.setdefault("PYTHONHASHSEED", str(SEED))
 # Official class ids we actually predict. The task allows removing ids and never
 # adding them; a predicted class that never occurs in the test set scores 0 AND is
 # added to the averaged class set, so shipping ids without a detector only lowers
-# Score A. Not predicted here: accident, near_miss, illegal_turn,
-# solid_line_crossing, road_obstacle, fire_smoke.
+# Score A. Not predicted here: accident, near_miss, road_obstacle, fire_smoke.
 CLASSES: list[str] = [
     "red_light",           # crossing the stop line on red
     "wrong_way",           # driving against the traffic direction / in the oncoming lane
@@ -45,6 +44,8 @@ CLASSES: list[str] = [
     "stopped_vehicle",     # stationary on the carriageway >= 10 s, not queued at a signal
     "jaywalking",          # pedestrian on the carriageway outside a crossing
     "failure_to_yield",    # driving through a crossing while a pedestrian is on it
+    "illegal_turn",        # turn from the wrong lane (east-bound approach, scene lane_rules)
+    "solid_line_crossing", # lane change across a solid lane line (east-bound approach)
     "stop_line",           # stopped past the stop line on red
     "congestion",          # standstill / crawling traffic across all lanes of a direction
 ]
@@ -75,6 +76,9 @@ def _get_pipeline():
         from traffic.pipeline import Pipeline
 
         _pipeline = Pipeline(ROOT, weights=DETECTOR_WEIGHTS)
+        if _pipeline.detector.device.type != "cuda":  # silent CPU fallback would blow the 3x time budget
+            print("[solution] WARNING: no CUDA device, Part A runs on CPU and will be cut short by the "
+                  "time budget", file=sys.stderr)
     return _pipeline
 
 

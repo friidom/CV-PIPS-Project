@@ -3,7 +3,7 @@
     python tools/ablation.py --video web/public/media/samples/C3905_720p.mp4 --seconds 60
 
 Every configuration runs the real code end to end (decode -> detector -> tracker ->
-alignment + signal phase -> the 8 rules) and every number written is measured on
+alignment + signal phase -> the event rules) and every number written is measured on
 this machine. There are no labels, so nothing here is accuracy: a run reports what
 it *outputs* and how many of the baseline run's events it reproduces (the official
 greedy temporal-IoU matcher from evaluate.py at tIoU >= 0.5), which is agreement

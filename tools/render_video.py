@@ -92,12 +92,14 @@ class Renderer:
     def draw(self, frame: np.ndarray, t: float) -> np.ndarray:
         k = np.searchsorted(self.frames, int(round(t * self.fps)), side="right") - 1
         active = [e for e in self.events if e[0] <= t <= e[1]]
-        highlight: dict[int, str] = {}
+        highlight: dict[int, list[str]] = {}   # one vehicle may commit several events at once
         for label, items in self.evidence.items():
             for ev in items:
                 if ev.start <= t <= ev.end:
                     for tid in ev.tids:
-                        highlight.setdefault(tid, label)
+                        labels = highlight.setdefault(tid, [])
+                        if label not in labels:
+                            labels.append(label)
         phase = int(self.ctx.phase_at(t))
         # scene
         for poly in self.crossings:
@@ -108,13 +110,16 @@ class Renderer:
             for tid, _, x1, y1, x2, y2, conf, cls in self.by_frame[k]:
                 p1 = (int(x1 * self.box_scale), int(y1 * self.box_scale))
                 p2 = (int(x2 * self.box_scale), int(y2 * self.box_scale))
-                label = highlight.get(int(tid))
-                if label:
-                    col = CLASS_COLOURS[label]
-                    cv2.rectangle(frame, p1, p2, col, 4)
-                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                    cv2.rectangle(frame, (p1[0], p1[1] - th - 10), (p1[0] + tw + 8, p1[1]), col, -1)
-                    cv2.putText(frame, label, (p1[0] + 4, p1[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
+                labels = highlight.get(int(tid))
+                if labels:
+                    cv2.rectangle(frame, p1, p2, CLASS_COLOURS[labels[0]], 4)
+                    y = p1[1]
+                    for label in labels:                # chips stacked above the box
+                        col = CLASS_COLOURS[label]
+                        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                        cv2.rectangle(frame, (p1[0], y - th - 10), (p1[0] + tw + 8, y), col, -1)
+                        cv2.putText(frame, label, (p1[0] + 4, y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
+                        y -= th + 12
                 else:
                     cv2.rectangle(frame, p1, p2, GROUP_COLOURS[int(class_group(np.array([int(cls)]))[0])], 1)
         # header

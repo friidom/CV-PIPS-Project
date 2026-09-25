@@ -41,22 +41,33 @@ export default function Demo() {
   // /demo#live opens straight into live mode; switching modes leaves an upload's result intact.
   const { hash } = useLocation();
   const [mode, setMode] = useState<"upload" | "live">(hash === "#live" ? "live" : "upload");
+  const result = isResult(job) && job.stage === "done" ? job : null;
+  const [upload, setUpload] = useState<{ sent: number; total: number } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cleanup = useRef<(() => void) | null>(null);
 
+  // Re-asked every few seconds while the server is still loading its models after a cold start.
   useEffect(() => {
     const ac = new AbortController();
-    getCapabilities(ac.signal)
-      .then(setCaps)
-      .catch((e: Error) => {
-        if (e.name !== "AbortError") setCapsError(e.message);
-      });
-    return () => ac.abort();
-  }, []);
+    let timer = 0;
+    const ask = () =>
+      getCapabilities(ac.signal)
+        .then((c) => {
+          setCaps(c);
+          setCapsError(null);
+          if (c.loading) timer = window.setTimeout(ask, 4000);
+        })
+        .catch((e: Error) => {
+          if (e.name !== "AbortError") setCapsError(e.message);
+        });
+    void ask();
+    return () => {
+      ac.abort();
+      window.clearTimeout(timer);
+    };
+  }, [result?.id]);
 
   useEffect(() => () => cleanup.current?.(), []);
-
-  const result = isResult(job) && job.stage === "done" ? job : null;
 
   useEffect(() => {
     if (result) setVisible(new Set(result.events.map((e) => e[2])));
@@ -88,13 +99,19 @@ export default function Demo() {
       }
 
       setPhase("uploading");
+      setUpload({ sent: 0, total: file.size });
+      const ac = new AbortController();
+      cleanup.current = () => ac.abort();
       let id: string;
       try {
-        ({ id } = await submitVideo(file));
+        ({ id } = await submitVideo(file, (sent, total) => setUpload({ sent, total }), ac.signal));
       } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
         setError(e instanceof ApiError ? e.message : "Could not reach the inference server.");
         setPhase("error");
         return;
+      } finally {
+        setUpload(null);
       }
 
       setPhase("running");
@@ -151,6 +168,14 @@ export default function Demo() {
       return next;
     });
 
+  const shownPct = Math.round(
+    (phase === "uploading" ? (upload && upload.total ? upload.sent / upload.total : 0) : (job?.progress ?? 0)) * 100,
+  );
+  // Linear extrapolation of the stage-weighted progress: rough, but it tells a visitor whether to wait.
+  const eta =
+    phase === "running" && job && job.progress > 0.03 && job.elapsed_sec > 5
+      ? (job.elapsed_sec * (1 - job.progress)) / job.progress
+      : null;
   const timings = result?.timings as (JobResult["timings"] & { budget_sec?: number }) | undefined;
   const budget = timings?.budget_sec ?? (result ? result.meta.duration * 3 : 0);
   const stats = (result as unknown as { stats?: Record<string, number> })?.stats;
@@ -274,20 +299,31 @@ export default function Demo() {
                     </button>
                   </div>
 
-                  <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-panel2">
+                  <div
+                    className="mt-4 h-1.5 overflow-hidden rounded-full bg-panel2"
+                    role="progressbar"
+                    aria-label={phase === "uploading" ? "Upload progress" : "Analysis progress"}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={shownPct}
+                  >
                     <div
                       className="h-full rounded-full bg-accent transition-[width] duration-300"
-                      style={{ width: `${Math.round((job?.progress ?? 0) * 100)}%` }}
+                      style={{ width: `${shownPct}%` }}
                     />
                   </div>
 
-                  <p className="num mt-3 text-xs text-muted">{job?.message ?? "Preparing the upload"}</p>
+                  <p className="num mt-3 text-xs text-muted" aria-live="polite">
+                    {phase === "uploading" && upload
+                      ? `Sending ${bytes(upload.sent)} of ${bytes(upload.total)} to the inference server`
+                      : job?.message ?? "Preparing the upload"}
+                  </p>
 
                   <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <MiniStat label="Progress" value={`${Math.round((job?.progress ?? 0) * 100)}%`} />
+                    <MiniStat label={phase === "uploading" ? "Uploaded" : "Progress"} value={`${shownPct}%`} />
                     <MiniStat label="Elapsed" value={`${(job?.elapsed_sec ?? 0).toFixed(0)}s`} />
                     <MiniStat label="Frames" value={(job?.frames_processed ?? 0).toLocaleString()} />
-                    <MiniStat label="Detections" value={(job?.detections ?? 0).toLocaleString()} />
+                    <MiniStat label="About" value={eta === null ? "—" : `${fmtWait(eta)} left`} />
                   </div>
 
                   <ol className="mt-5 space-y-1.5 text-xs">
@@ -402,9 +438,9 @@ export default function Demo() {
                     <Row k="Part A" v={`${timings?.part_a_sec.toFixed(1)} s`} />
                     <Row k="Part B" v={`${timings?.part_b_sec.toFixed(1)} s`} />
                     <Row
-                      k="Total vs budget"
+                      k="Total (3× clip)"
                       v={`${timings?.total_sec.toFixed(1)} s / ${budget.toFixed(0)} s`}
-                      tone={timings && timings.total_sec < budget ? "ok" : "bad"}
+                      tone={timings && timings.total_sec < budget ? "ok" : undefined}
                     />
                     {stats && (
                       <>
@@ -453,7 +489,12 @@ export default function Demo() {
                   </Callout>
                 ) : caps ? (
                   <dl className="space-y-2 text-xs">
-                    <Row k="Status" v={caps.ok ? "ready" : "degraded"} tone={caps.ok ? "ok" : "bad"} />
+                    <Row
+                      k="Status"
+                      v={caps.loading ? "loading models…" : caps.ok ? (caps.busy ? "ready · busy" : "ready") : "degraded"}
+                      tone={caps.ok ? "ok" : caps.loading ? undefined : "bad"}
+                    />
+                    {caps.detail && <Row k="Error" v={caps.detail} tone="bad" />}
                     <Row k="Device" v={caps.gpu ?? caps.device} />
                     <Row k="Part A model" v={caps.detector} />
                     <Row k="Part B model" v={caps.risk_detector} />
@@ -465,9 +506,25 @@ export default function Demo() {
                 ) : (
                   <Spinner label="Checking…" />
                 )}
+                {caps?.loading && (
+                  <p className="mt-3 text-[11px] leading-relaxed text-faint">
+                    The server has just started and is loading both detectors, which takes about a minute
+                    on a CPU. You can upload now; the clip waits in the queue until the models are ready.
+                  </p>
+                )}
+                {caps?.last_run && (
+                  <p className="mt-3 text-[11px] leading-relaxed text-muted">
+                    Last clip here: <span className="num">{caps.last_run.duration.toFixed(0)} s</span> analysed in{" "}
+                    <span className="num">{fmtWait(caps.last_run.total_sec)}</span> (
+                    <span className="num">{(caps.last_run.total_sec / Math.max(caps.last_run.duration, 1)).toFixed(1)}×</span>{" "}
+                    real time). Expect a similar rate per second of video.
+                  </p>
+                )}
                 <p className="mt-3 text-[11px] leading-relaxed text-faint">
                   One clip is processed at a time: the pipeline already uses a batched detector and
-                  three decoder threads, so running two at once would only make both slower.
+                  three decoder threads, so running two at once would only make both slower. On a CPU
+                  host the full pipeline runs well below real time, so a clip of 10&ndash;20&nbsp;s gives
+                  the quickest answer.
                 </p>
               </Panel>
             )}
@@ -479,9 +536,9 @@ export default function Demo() {
             <Stat value={result.events.length} label="Events detected" hint="Part A segments" />
             <Stat
               value={`${((timings?.total_sec ?? 0) / Math.max(result.meta.duration, 1)).toFixed(2)}×`}
-              label="Of real time"
-              tone="ok"
-              hint={`Budget is 3.00× — used ${(((timings?.total_sec ?? 0) / Math.max(budget, 1)) * 100).toFixed(0)}% of it`}
+              label="Of real time, on this server"
+              tone={timings && timings.total_sec < budget ? "ok" : undefined}
+              hint={`on ${result.device}; the 3.00× budget is the organizers' GPU run, not this demo server`}
             />
             <Stat
               value={Math.max(0, ...result.risk.map((r) => r[1])).toFixed(3)}
@@ -507,6 +564,13 @@ function Row({ k, v, tone }: { k: string; v: string; tone?: "ok" | "bad" }) {
       </dd>
     </div>
   );
+}
+
+/** "45 s", "3 min", "1 h 5 min". */
+function fmtWait(sec: number): string {
+  if (sec < 120) return `${Math.max(1, Math.round(sec))} s`;
+  const min = Math.round(sec / 60);
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`;
 }
 
 function MiniStat({ label, value }: { label: string; value: string }) {

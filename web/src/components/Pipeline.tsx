@@ -1,3 +1,4 @@
+import { IMPLEMENTED_CLASSES } from "../lib/classes";
 import { useReveal } from "../lib/hooks";
 import { Tag } from "./ui";
 
@@ -49,7 +50,7 @@ export const PART_A: Stage[] = [
   {
     key: "rules",
     name: "Apply rules",
-    detail: "Eight event rules over trajectories, geometry and signal phase",
+    detail: `${IMPLEMENTED_CLASSES.length} event rules over trajectories, geometry and signal phase`,
     kind: "rule",
     source: "src/traffic/events/",
   },

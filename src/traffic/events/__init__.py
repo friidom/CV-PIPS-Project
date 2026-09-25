@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Callable
 
 from .context import EventContext, Evidence, SceneMasks
+from .lanes import illegal_turn, solid_line_crossing
 from .maneuvers import u_turn, wrong_way
 from .pedestrians import failure_to_yield, jaywalking
 from .signal_violations import red_light, stop_line
@@ -18,6 +19,8 @@ RULES: dict[str, Rule] = {
     "stopped_vehicle": stopped_vehicle,
     "jaywalking": jaywalking,
     "failure_to_yield": failure_to_yield,
+    "illegal_turn": illegal_turn,
+    "solid_line_crossing": solid_line_crossing,
     "stop_line": stop_line,
     "congestion": congestion,
 }

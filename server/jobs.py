@@ -3,7 +3,8 @@
 One worker thread runs one inference at a time: the pipeline already saturates the
 GPU with a batched detector and three decoder threads, so a second concurrent job
 would only make both slower and risk running out of VRAM. Jobs are kept in memory
-with their uploaded file in a temp directory and evicted after TTL_SEC.
+with their uploaded file in a temp directory; finished ones are evicted TTL_SEC after
+they finish, or oldest-first beyond MAX_JOBS. Queued and running jobs are never evicted.
 """
 from __future__ import annotations
 
@@ -79,6 +80,8 @@ class JobStore:
         self._worker: threading.Thread | None = None
         self._run: Callable[[Job], None] | None = None
         self._active = False
+        # Speed of the last completed job on this machine: {"duration", "total_sec", "device"}.
+        self.last_run: dict | None = None
 
     @property
     def root(self) -> Path:
@@ -103,8 +106,16 @@ class JobStore:
     def enqueue(self, job: Job) -> None:
         with self._wake:
             self._queue.append(job.id)
-            job.update(message=f"Queued, {len(self._queue)} ahead" if len(self._queue) > 1 else "Starting")
+            ahead = len(self._queue) - 1 + self._active
+            job.update(message=f"Queued, {ahead} ahead" if ahead else "Starting")
             self._wake.notify()
+
+    def discard(self, job: Job) -> None:
+        """Forget a job that never reached the queue (rejected upload) and delete its files."""
+        with self._lock:
+            if self._jobs.pop(job.id, None) is not None:
+                self._order.remove(job.id)
+        shutil.rmtree(job.workdir, ignore_errors=True)
 
     def get(self, jid: str) -> Job | None:
         with self._lock:
@@ -128,14 +139,15 @@ class JobStore:
 
     def _evict_locked(self) -> None:
         now = time.time()
-        stale = [j for j in self._order if now - self._jobs[j].created > TTL_SEC]
-        while len(self._order) - len(stale) > MAX_JOBS:
-            stale.append(self._order[len(stale)])
-        for jid in dict.fromkeys(stale):
-            job = self._jobs.pop(jid, None)
+        # Only finished or cancelled jobs: a clip still uploading, queued or running keeps its files.
+        over = [j for j in self._order if self._jobs[j].finished is not None or self._jobs[j].cancelled]
+        stale = [j for j in over if now - (self._jobs[j].finished or self._jobs[j].created) > TTL_SEC]
+        extra = len(self._order) - len(stale) - MAX_JOBS
+        stale += [j for j in over if j not in stale][: max(0, extra)]
+        for jid in stale:
+            job = self._jobs.pop(jid)
             self._order.remove(jid)
-            if job:
-                shutil.rmtree(job.workdir, ignore_errors=True)
+            shutil.rmtree(job.workdir, ignore_errors=True)
 
     def _loop(self) -> None:
         while True:
@@ -155,6 +167,10 @@ class JobStore:
             else:
                 if not job.cancelled:
                     job.update(stage="done", progress=1.0, message="Complete", finished=time.time())
+                    meta, timings = (job.result or {}).get("meta"), (job.result or {}).get("timings")
+                    if meta and timings:
+                        self.last_run = {"duration": meta["duration"], "total_sec": timings["total_sec"],
+                                         "device": job.result.get("device")}
             finally:
                 self._active = False
 

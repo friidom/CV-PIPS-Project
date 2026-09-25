@@ -64,9 +64,9 @@ const PART_A: Stage[] = [
     id: "rules",
     name: "Event rules",
     kind: "rule",
-    one_line: "Eight classes from trajectories, geometry and phase",
+    one_line: `${IMPLEMENTED_CLASSES.length} classes from trajectories, geometry and phase`,
     detail:
-      "Each rule turns per-sample predicates into time segments. Thresholds are scale-free — speeds in object sizes per second, distances against the road distance transform — so they hold at the top and bottom of a perspective frame. Every rule can also emit Evidence (the raw segment, the track ids, a note), which is what tools/render_video.py draws on the annotated clips.",
+      "Each rule turns per-sample predicates into time segments. Thresholds are scale-free — speeds in object sizes per second, distances against the road distance transform or in a pedestrian's own body height, lane positions from the lane lines' vanishing point — so they hold at the top and bottom of a perspective frame. Every rule can also emit Evidence (the raw segment, the track ids, a note), which is what tools/render_video.py draws on the annotated clips.",
     source: "src/traffic/events/",
   },
   {

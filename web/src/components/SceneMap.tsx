@@ -1,12 +1,13 @@
 import { useState } from "react";
 import type { SceneData } from "../lib/types";
 
-type LayerKey = "zones" | "crosswalks" | "islands" | "sidewalks" | "stop_lines" | "signals";
+type LayerKey = "zones" | "crosswalks" | "islands" | "sidewalks" | "stop_lines" | "lane_lines" | "signals";
 
 const LAYERS: { key: LayerKey; label: string; color: string; note: string }[] = [
   { key: "stop_lines", label: "Stop line", color: "#f5222d", note: "red_light and stop_line measure signed distance to it" },
   { key: "crosswalks", label: "Crossings", color: "#40a9ff", note: "failure_to_yield overlap test and the jaywalking exclusion" },
-  { key: "zones", label: "Direction zones", color: "#ffb020", note: "congestion is evaluated per zone" },
+  { key: "lane_lines", label: "Lane lines", color: "#f0f0f0", note: "illegal_turn and solid_line_crossing measure lanes against their solid part" },
+  { key: "zones", label: "Zones", color: "#ffb020", note: "the junction, queue and congestion zones and the exit legs the rules test against" },
   { key: "islands", label: "Islands", color: "#9254de", note: "cut out of the carriageway mask" },
   { key: "sidewalks", label: "Sidewalks", color: "#3ecf8e", note: "cut out of the carriageway mask" },
   { key: "signals", label: "Signal heads", color: "#fadb14", note: "lamp windows sampled every frame for the phase" },
@@ -15,7 +16,7 @@ const LAYERS: { key: LayerKey; label: string; color: string; note: string }[] = 
 /** The camera's reference frame with the hand-labelled scene geometry over it. */
 export function SceneMap({ scene, base }: { scene: SceneData; base: string }) {
   const [on, setOn] = useState<Set<LayerKey>>(
-    () => new Set<LayerKey>(["stop_lines", "crosswalks", "zones", "signals"]),
+    () => new Set<LayerKey>(["stop_lines", "lane_lines", "crosswalks", "zones", "signals"]),
   );
   const [w, h] = scene.size;
 
@@ -99,6 +100,20 @@ export function SceneMap({ scene, base }: { scene: SceneData; base: string }) {
               </g>
             ))}
 
+          {on.has("lane_lines") &&
+            scene.lane_lines?.map((p) => (
+              <line
+                key={p.name}
+                x1={p.points[0][0]}
+                y1={p.points[0][1]}
+                x2={p.points[1][0]}
+                y2={p.points[1][1]}
+                stroke={colorOf("lane_lines")}
+                strokeWidth={3}
+                strokeLinecap="round"
+              />
+            ))}
+
           {on.has("signals") &&
             scene.signals.flatMap((head) =>
               head.lamps.map((l) => (
@@ -112,7 +127,7 @@ export function SceneMap({ scene, base }: { scene: SceneData; base: string }) {
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5">
-        {LAYERS.map((l) => {
+        {LAYERS.filter((l) => l.key !== "lane_lines" || scene.lane_lines?.length).map((l) => {
           const active = on.has(l.key);
           return (
             <button

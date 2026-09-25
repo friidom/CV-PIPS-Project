@@ -44,10 +44,13 @@ def red_light(ctx: EventContext, max_exit: float = 8.0,
 
 
 def stop_line(ctx: EventContext, past_px: float = 15.0, zone_px: float = 140.0, still_speed: float = 0.08,
-              min_still: float = 1.0, evidence: list[Evidence] | None = None) -> list[tuple[float, float]]:
-    """Vehicle standing past the stop line (front over it, not yet in the junction) during red.
+              min_still: float = 2.0, evidence: list[Evidence] | None = None) -> list[tuple[float, float]]:
+    """Vehicle standing past the stop line on red without entering the intersection.
 
-    Start = the vehicle stops; end = the signal turns green (or the vehicle leaves first).
+    The official definition only: the vehicle stands between the stop line and the far edge of
+    the crossing (``zone_px``) on red for >= ``min_still`` s. A vehicle held inside the junction
+    on red has entered the intersection and is not counted.
+    Start = it stands there on red; end = the signal turns green (or it drives off first).
     """
     green_starts = np.array([ctx.phase_t[s] for s, _, v in runs(ctx.phase) if v == GREEN])
     segs = []
@@ -56,15 +59,12 @@ def stop_line(ctx: EventContext, past_px: float = 15.0, zone_px: float = 140.0, 
         in_zone = (dist < -past_px) & (dist > -zone_px) & (along > 0.0) & (along < 1.0)
         if not in_zone.any():
             continue
-        still = in_zone & (tr.rel_speed() < still_speed)
-        for s, e in mask_segments(tr.t, still, max_gap=1.0, min_len=min_still):
-            during = (ctx.phase_t >= s) & (ctx.phase_t <= e)
-            if not (ctx.phase[during] == RED).any():
-                continue
+        standing_on_red = (tr.rel_speed() < still_speed) & (ctx.phase_at(tr.t) == RED)
+        for s, e in mask_segments(tr.t, in_zone & standing_on_red, max_gap=1.0, min_len=min_still):
             nxt = green_starts[green_starts > s]
             # standing until (about) green: the event ends when the signal changes, else when it drives off
-            end = nxt[0] if len(nxt) and nxt[0] <= e + 2.0 else e
-            segs.append((s, float(end)))
+            end = float(nxt[0]) if len(nxt) and nxt[0] <= e + 2.0 else e
+            segs.append((s, end))
             if evidence is not None:
-                evidence.append(Evidence(s, float(end), (tr.tid,), "standing past the stop line on red"))
-    return merge_segments(segs)
+                evidence.append(Evidence(s, end, (tr.tid,), "standing past the stop line on red"))
+    return merge_segments(segs, max_gap=1.0)

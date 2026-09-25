@@ -61,7 +61,7 @@ export default function Report() {
           <Panel className="my-4 p-4">
             <div className="num text-xs leading-relaxed text-muted">
               video &rarr; sampled decode (ref frames only) &rarr; YOLO11m &rarr; Kalman/IoU tracker
-              &rarr; SIFT homography &rarr; scene masks + signal phase &rarr; 8 event rules &rarr;
+              &rarr; SIFT homography &rarr; scene masks + signal phase &rarr; 10 event rules &rarr;
               merge/split/filter &rarr; segments
             </div>
             <div className="num mt-2 text-xs leading-relaxed text-muted">
@@ -255,8 +255,8 @@ export default function Report() {
               stopped ones.
             </li>
             <li>
-              <b>Lane polygons and a turn-permission table</b> to unlock illegal_turn and
-              solid_line_crossing, which are geometry problems we simply have not drawn yet.
+              <b>Lane lines for the other approaches.</b> illegal_turn and solid_line_crossing only
+              cover the east-bound approach, the one with drawn lane lines and a turn-permission table.
             </li>
             <li>
               <b>Accuracy ablations.</b> Detector size, frame stride and tracking are already ablated
@@ -304,6 +304,7 @@ export default function Report() {
         {manifest && (
           <p className="num mt-2 text-[11px] text-faint">
             Site data generated {manifest.generated_at} from commit {manifest.source_commit}.
+            {manifest.events_refresh && ` Events refreshed ${manifest.events_refresh.at}: ${manifest.events_refresh.note}`}
           </p>
         )}
       </Callout>

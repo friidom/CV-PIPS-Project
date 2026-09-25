@@ -7,11 +7,11 @@ proxies) plus configs/. For every Part A event it records
 
   tracks  - the rule's own evidence tracks (Evidence.tids, as carried by the overlay),
             numbered exactly as the player draws them;
-  region  - the scene region (configs/scene.json crossing or direction zone) under most
-            evidence boxes during the event's first second (the vehicle's, when the
-            evidence includes one), judged by the rules' own
-            ground-footprint test (failure_to_yield's >= 15% bottom-strip overlap). The
-            scene has no lane polygons, so this is a region, never a lane;
+  region  - the scene region (configs/scene.json crossing or zone, the most specific one)
+            under most evidence boxes during the event's first second (the vehicle's, when
+            the evidence includes one), judged by the rules' own
+            ground-footprint test (failure_to_yield's >= 15% bottom-strip overlap). Lane
+            lines exist only on the east-bound approach, so this is a region, never a lane;
   foot    - the median of those foot points, in reference-plate pixels;
   phase   - the east-bound signal phase at the event's start.
 
@@ -63,8 +63,10 @@ def proxy_homography(path: Path, reference: np.ndarray) -> tuple[np.ndarray, int
 
 
 def region_integrals(scene: Scene) -> dict[str, np.ndarray]:
-    """Integral images of each region, crossings first: a crossing inside a zone is the more specific answer."""
-    polys = {**scene.crosswalks, **scene.zones}
+    """Integral images of each region, most specific first: the crossings, then the zones from the
+    smallest (wb_near before the wb carriageway that contains it)."""
+    zones = sorted(scene.zones.items(), key=lambda kv: cv2.contourArea(kv[1].astype(np.float32)))
+    polys = {**scene.crosswalks, **dict(zones)}
     return {k: cv2.integral(scene.mask([p])) for k, p in polys.items()}
 
 

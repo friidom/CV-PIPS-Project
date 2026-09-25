@@ -97,7 +97,7 @@ export const CLASSES: ClassMeta[] = [
     end: "Vehicle moves again or is removed",
     color: "#fadb14",
     rule: "src/traffic/events/stationary.py",
-    how: "Foot point static within 0.12 object sizes over 2 s, minus signal queues, minus bus dwell in the west-bound lanes, minus seconds inside a congestion event.",
+    how: "Foot point static within 0.12 object sizes over 2 s, minus signal queues, minus bus dwell in the west-bound lanes, minus stops inside the junction (a vehicle there is manoeuvring or yielding), minus seconds inside a congestion event.",
   },
   {
     id: "jaywalking",
@@ -107,7 +107,7 @@ export const CLASSES: ClassMeta[] = [
     end: "Pedestrian leaves the road",
     color: "#36cfc9",
     rule: "src/traffic/events/pedestrians.py",
-    how: "Person track not covered by a vehicle box, on the road distance transform with the crossings dilated out, walking >= 60 px and >= 20 px clear of kerbs.",
+    how: "Person track not covered by a vehicle box, more than a quarter of its own height from the kerbs and painted crossings for >= 1.5 s, reaching >= 1 body height clear and walking >= 1 body height. Body heights keep the test the same near and far from the camera.",
   },
   {
     id: "failure_to_yield",
@@ -117,7 +117,7 @@ export const CLASSES: ClassMeta[] = [
     end: "Vehicle leaves the crossing",
     color: "#40a9ff",
     rule: "src/traffic/events/pedestrians.py",
-    how: "Vehicle ground footprint overlaps a crosswalk mask while moving, with a pedestrian inside the dilated crossing within 80 px of that footprint.",
+    how: "Vehicle ground footprint overlaps a crosswalk mask while moving, with a pedestrian inside the slightly dilated crossing within half of that pedestrian's body height of the footprint.",
   },
   {
     id: "illegal_turn",
@@ -126,8 +126,8 @@ export const CLASSES: ClassMeta[] = [
     start: "Vehicle starts turning",
     end: "Vehicle completes the turn",
     color: "#597ef7",
-    rule: null,
-    how: "Not detected. Needs per-lane polygons and a turn-permission table that the scene config does not yet carry.",
+    rule: "src/traffic/events/lanes.py",
+    how: "East-bound approach only. The lane a vehicle holds 180 px before the stop line (measured in perspective from the lane lines' vanishing point) is checked against the scene's turn-permission table (kerb lane: sharp right only; lane 2: straight or right; lanes 3-4: straight; median lane: straight or U-turn). The exit leg it reaches decides the turn.",
   },
   {
     id: "solid_line_crossing",
@@ -136,8 +136,8 @@ export const CLASSES: ClassMeta[] = [
     start: "Wheel crosses the line",
     end: "Vehicle is fully in the new lane",
     color: "#73d13d",
-    rule: null,
-    how: "Not detected. Needs solid-marking geometry, which is not in configs/scene.json.",
+    rule: "src/traffic/events/lanes.py",
+    how: "East-bound approach only. The vehicle's lane coordinate passes a lane line on its solid part (the last stretch before the stop line), holding each side >= 0.3 s and moving sideways by about a third of a lane.",
   },
   {
     id: "stop_line",
@@ -147,7 +147,7 @@ export const CLASSES: ClassMeta[] = [
     end: "Signal turns green",
     color: "#ffc53d",
     rule: "src/traffic/events/signal_violations.py",
-    how: "Vehicle standing 15-140 px beyond the stop line during RED; the segment ends at the next GREEN onset.",
+    how: "Vehicle standing 15-140 px beyond the stop line, before the far edge of the crossing, on RED for >= 2 s; the segment ends at the next GREEN onset. A vehicle held inside the junction has entered the intersection and is not counted.",
   },
   {
     id: "congestion",
@@ -157,7 +157,7 @@ export const CLASSES: ClassMeta[] = [
     end: "Queue clears",
     color: "#d48806",
     rule: "src/traffic/events/stationary.py",
-    how: "Per zone and per second: >= 4 vehicles present and >= 60% of them below 0.35 sizes/s, with a 12 s grace into green for the approach.",
+    how: "Per second in the junction box, the east-bound exit and the west-bound carriageway past its crossing: >= 4 vehicles whose median speed is below 0.25 sizes/s, for >= 8 s. Queues in front of a stop line or crossing are signal or pedestrian waits, not congestion.",
   },
   {
     id: "road_obstacle",

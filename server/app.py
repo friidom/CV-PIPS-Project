@@ -3,6 +3,7 @@
     uvicorn server.app:app --host 127.0.0.1 --port 8000
 
 Endpoints
+    GET  /api/health              liveness for uptime checks; never loads a model
     GET  /api/capabilities        device, model names and the accepted upload limits
     POST /api/jobs                multipart .mp4 -> {id}
     GET  /api/jobs/{id}           progress, or the full result once finished
@@ -21,11 +22,13 @@ import json
 import os
 import re
 import sys
+import threading
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -37,6 +40,8 @@ from server.jobs import store  # noqa: E402
 
 MAX_UPLOAD_BYTES = int(os.environ.get("DEMO_MAX_UPLOAD_MB", "200")) * 1024 * 1024
 MAX_DURATION_SEC = float(os.environ.get("DEMO_MAX_DURATION_SEC", "120"))
+# Uploads waiting behind the running one; each holds its file on disk until processed.
+MAX_QUEUE = int(os.environ.get("DEMO_MAX_QUEUE", "3"))
 LIVE_MAX_BYTES = 2 * 1024 * 1024
 CHUNK = 1024 * 1024
 
@@ -47,6 +52,19 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+# The overlay JSON is ~4 MB per clip; Starlette skips video and text/event-stream.
+app.add_middleware(GZipMiddleware, minimum_size=2048)
+
+# Model load takes a minute on a small CPU; do it once, off the event loop, at startup.
+_models: dict = {"state": "loading", "detail": None}
+
+
+def _warm() -> None:
+    try:
+        inference.engine()
+        _models.update(state="ready")
+    except Exception as exc:  # noqa: BLE001 - reported by /api/capabilities
+        _models.update(state="error", detail=f"{type(exc).__name__}: {exc}")
 
 
 def _run(job) -> None:
@@ -68,20 +86,25 @@ def _run(job) -> None:
 @app.on_event("startup")
 async def _startup() -> None:
     store.start(_run)
+    threading.Thread(target=_warm, name="warm-models", daemon=True).start()
+
+
+@app.api_route("/api/health", methods=["GET", "HEAD"])
+async def health() -> dict:
+    return {"ok": True, "models": _models["state"], "queue_depth": store.queue_depth(), "busy": store.busy()}
 
 
 @app.get("/api/capabilities")
 async def capabilities() -> dict:
-    try:
+    state = _models["state"]
+    device, gpu = "unavailable", None
+    if state == "ready":
         eng = inference.engine()
         device, gpu = eng.device, eng.gpu_name()
-        ok = True
-        detail = None
-    except Exception as exc:  # noqa: BLE001 - the UI shows this instead of a dead upload box
-        device, gpu, ok, detail = "unavailable", None, False, f"{type(exc).__name__}: {exc}"
     return {
-        "ok": ok,
-        "detail": detail,
+        "ok": state == "ready",
+        "loading": state == "loading",
+        "detail": _models["detail"] if state == "error" else None,
         "device": device,
         "gpu": gpu,
         "detector": "YOLO11m 1280x736 (TorchScript, COCO)",
@@ -90,42 +113,60 @@ async def capabilities() -> dict:
         "max_duration_sec": MAX_DURATION_SEC,
         "classes": inference.CLASSES,
         "queue_depth": store.queue_depth(),
+        "busy": store.busy(),
+        # Measured on this server, so a visitor can size a clip to the wait they will get.
+        "last_run": store.last_run,
     }
 
 
 @app.post("/api/jobs")
-async def create_job(file: UploadFile) -> dict:
-    name = (file.filename or "upload.mp4").strip()
-    if not name.lower().endswith(".mp4"):
-        raise HTTPException(415, "Only .mp4 files are accepted.")
+async def create_job(request: Request) -> dict:
+    # Checked before the body is read: Starlette would otherwise spool all of it to disk first.
+    too_big = f"File is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
+    if int(request.headers.get("content-length") or 0) > MAX_UPLOAD_BYTES + CHUNK:
+        raise HTTPException(413, too_big)
+    if store.queue_depth() >= MAX_QUEUE:
+        raise HTTPException(503, f"{MAX_QUEUE} clips are already waiting. Try again in a few minutes.")
 
-    job = store.create(name)
-    size = 0
-    try:
-        with job.path.open("wb") as fh:
-            while chunk := await file.read(CHUNK):
-                size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:
-                    raise HTTPException(413, f"File is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
-                fh.write(chunk)
-    except HTTPException:
-        job.path.unlink(missing_ok=True)
-        raise
+    async with request.form(max_files=1) as form:
+        file = form.get("file")
+        if file is None or isinstance(file, str):
+            raise HTTPException(400, "Send the video as the multipart field 'file'.")
+        name = (file.filename or "upload.mp4").strip()
+        if not name.lower().endswith(".mp4"):
+            raise HTTPException(415, "Only .mp4 files are accepted.")
+
+        job = store.create(name)
+        size = 0
+        try:
+            with job.path.open("wb") as fh:
+                while chunk := await file.read(CHUNK):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD_BYTES:
+                        raise HTTPException(413, too_big)
+                    fh.write(chunk)
+        except BaseException:
+            store.discard(job)
+            raise
 
     from traffic.video import probe
 
     try:
         info = probe(str(job.path))
+        if info.n_frames <= 0 or info.fps <= 0:
+            raise HTTPException(400, "This file has no readable video stream.")
+        if info.duration > MAX_DURATION_SEC:
+            raise HTTPException(
+                413,
+                f"Clip is {info.duration:.0f} s; the demo accepts up to {MAX_DURATION_SEC:.0f} s. "
+                "Trim it and try again.",
+            )
+    except HTTPException:
+        store.discard(job)
+        raise
     except Exception:
+        store.discard(job)
         raise HTTPException(400, "This file could not be opened as a video.") from None
-    if info.n_frames <= 0 or info.fps <= 0:
-        raise HTTPException(400, "This file has no readable video stream.")
-    if info.duration > MAX_DURATION_SEC:
-        raise HTTPException(
-            413,
-            f"Clip is {info.duration:.0f} s; the demo accepts up to {MAX_DURATION_SEC:.0f} s. "
-            "Trim it and try again.",
-        )
 
     store.enqueue(job)
     return {"id": job.id}
@@ -209,7 +250,7 @@ DIST = ROOT / "web" / "dist"
 if DIST.exists():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
-    @app.get("/{path:path}")
+    @app.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def spa(path: str) -> FileResponse:
         """Serve built files, falling back to index.html so client-side routes work."""
         candidate = (DIST / path).resolve()

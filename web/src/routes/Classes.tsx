@@ -117,7 +117,7 @@ export default function Classes() {
       </ul>
 
       <div className="mt-10 grid gap-4 md:grid-cols-2">
-        <Callout tone="note" title="Why we removed six ids instead of guessing">
+        <Callout tone="note" title={`Why we removed ${CLASSES.length - detected} ids instead of guessing`}>
           Score A averages F1 over the classes present in the test set <em>plus</em> any class we
           predict. A class we emit but never get right is a zero folded into that average, and a class
           we stay silent on costs nothing beyond the ground-truth classes we miss. The task permits

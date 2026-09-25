@@ -26,15 +26,22 @@ export interface EventFacts {
   clips: Record<string, { inliers: number; events: EventFact[] }>;
 }
 
-/** configs/scene.json region ids. There are no lane polygons, so these are regions, not lanes. */
+/**
+ * configs/scene.json crossing and zone ids. Lane lines exist only on the east-bound approach
+ * (for the lane rules), so an event's place is a region, not a lane.
+ */
 export const REGION_LABEL: Record<string, string> = {
   cw1_eb: "Crossing 1, EB side",
   cw1_wb: "Crossing 1, WB side",
   cw2: "Crossing 2",
   eb_approach: "EB approach",
+  eb_stop: "EB stop line to crossing",
+  wb_approach: "WB approach",
+  box: "Junction box",
   eb_exit: "EB exit",
   wb: "WB carriageway",
-  other: "Junction / other road",
+  wb_near: "WB past the crossing",
+  other: "Other road",
 };
 
 export const regionLabel = (id: string | null | undefined): string =>

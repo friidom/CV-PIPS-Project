@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -79,12 +80,15 @@ class Engine:
 
 
 _engine: Engine | None = None
+_engine_lock = threading.Lock()
 
 
 def engine() -> Engine:
+    """The shared Engine; the first caller loads it, concurrent callers wait for that load."""
     global _engine
-    if _engine is None:
-        _engine = Engine()
+    with _engine_lock:
+        if _engine is None:
+            _engine = Engine()
     return _engine
 
 

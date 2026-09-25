@@ -69,6 +69,11 @@ def build_scene() -> dict:
         "islands": polys(cfg["islands"]),
         "sidewalks": polys(cfg["sidewalks"]),
         "zones": polys(cfg["zones"]),
+        "lane_lines": [
+            {"name": f"{approach}{i + 1}", "points": seg}
+            for approach, segs in cfg.get("lane_lines", {}).items()
+            for i, seg in enumerate(segs)
+        ],
         "signals": [
             {
                 "name": head,

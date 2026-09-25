@@ -244,7 +244,10 @@ export default function Dashboard() {
             cover={(t) => [...f.clips].filter((id) => (byId.get(id)?.meta.duration ?? 0) > t).length}
           />
         </Card>
-        <Card title="Events by class" note="Click a class to filter; click again to add or remove it.">
+        <Card
+          title="Events by class"
+          note="Click a class to filter; click again to add or remove it. Right column: events per hour, normalised from the footage in scope — not an hourly count."
+        >
           <ClassBars
             counts={classCounts}
             classes={f.classes}
@@ -262,7 +265,7 @@ export default function Dashboard() {
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <Card
           title="Where events begin"
-          note="The scene region under the event's evidence during its first second, on the reference plate. configs/scene.json has crossings and direction zones but no lane polygons, so this is a region, never a lane. Dots are events; click one to select it."
+          note="The scene region under the event's evidence during its first second, on the reference plate: a crossing, else the smallest zone of configs/scene.json that holds it. Lane lines exist only on the east-bound approach, so this is a region, never a lane. Dots are events; click one to select it."
         >
           {scene && facts ? (
             <RegionMap
@@ -359,11 +362,12 @@ export default function Dashboard() {
       <Card
         className="mt-4"
         title="Clip comparison and processing"
-        note="Counts follow the class, window and region filters; click a row to include or exclude that clip. Runtimes are the organizers' harness on one RTX 5080 against the 4K originals; the budget is 3× the clip."
+        note="Event counts follow the class, window and region filters; peak risk and alarms follow the window (risk has no class or region). Click a row to include or exclude that clip. Runtimes are the organizers' harness on one RTX 5080 against the 4K originals; the budget is 3× the clip."
       >
         <ClipTable
           samples={samples ?? []}
           rows={rows.filter((r) => passes(r, f, "clip"))}
+          range={f.range}
           clips={f.clips}
           onToggle={(id) => setF((p) => ({ ...p, clips: p.clips.has(id) && p.clips.size === 1 ? new Set(CLIPS) : toggle(p.clips, id) }))}
         />
@@ -928,17 +932,20 @@ function Strip({
 function ClipTable({
   samples,
   rows,
+  range,
   clips,
   onToggle,
 }: {
   samples: SampleData[];
   rows: Row[];
+  range: [number, number] | null;
   clips: Set<string>;
   onToggle: (id: string) => void;
 }) {
+  const inRange = (t: number) => !range || (t >= range[0] && t < range[1]);
   const maxRtf = 3;
   return (
-    <div className="thin-scroll overflow-x-auto">
+    <div className="thin-scroll relative overflow-x-auto">
       <table className="w-full min-w-[860px] border-collapse text-left text-xs">
         <thead className="text-faint">
           <tr className="border-b border-line">
@@ -960,7 +967,9 @@ function ClipTable({
             const on = clips.has(s.id);
             const rt = s.runtime;
             const rtf = rt ? rt.total_sec / rt.duration : null;
-            const peak = s.risk.reduce((m, p) => Math.max(m, p[1]), 0);
+            const peak = s.risk.reduce((m, p) => (inRange(p[0]) ? Math.max(m, p[1]) : m), 0);
+            // Seconds of this clip inside the window: the denominator of the normalised rate.
+            const scope = range ? Math.max(0, Math.min(s.meta.duration, range[1]) - range[0]) : s.meta.duration;
             const classes = [...new Set(mine.map((r) => r.label))].sort(byClassOrder);
             return (
               <tr
@@ -977,12 +986,15 @@ function ClipTable({
                 </td>
                 <td className="num px-2 py-2 text-right text-muted">{(s.meta.duration / 60).toFixed(1)} min</td>
                 <td className="num px-2 py-2 text-right text-text">{mine.length}</td>
-                <td className="num px-2 py-2 text-right text-muted">{((mine.length / s.meta.duration) * 3600).toFixed(0)}</td>
+                <td className="num px-2 py-2 text-right text-muted">
+                  {scope > 0 ? ((mine.length / scope) * 3600).toFixed(0) : "—"}
+                </td>
                 <td className="px-2 py-2">
                   <span className="flex flex-wrap gap-1">
                     {classes.map((c) => (
                       <span key={c} className="inline-flex items-center gap-1 text-[10px] text-muted" title={classLabel(c)}>
                         <LineKey color={classColor(c)} />
+                        <span className="sr-only">{classLabel(c)}</span>
                         {mine.filter((r) => r.label === c).length}
                       </span>
                     ))}
@@ -992,7 +1004,7 @@ function ClipTable({
                   {peak.toFixed(3)}
                   {peak >= THETA && <span className="ml-1 text-[10px] text-bad">&#9650;</span>}
                 </td>
-                <td className="num px-2 py-2 text-right text-muted">{findAlarms(s.risk).length}</td>
+                <td className="num px-2 py-2 text-right text-muted">{findAlarms(s.risk).filter((a) => inRange(a.start)).length}</td>
                 <td className="num px-2 py-2 text-right text-muted">{rt ? `${rt.part_a_sec.toFixed(1)} s` : "—"}</td>
                 <td className="num px-2 py-2 text-right text-muted">{rt ? `${rt.part_b_sec.toFixed(1)} s` : "—"}</td>
                 <td className="py-2 pl-2">

@@ -1,0 +1,5 @@
+# Development tools (not needed to run the submission).
+-r requirements.txt
+ultralytics==8.4.160   # tools/export_weights.py: YOLO11 checkpoints -> TorchScript
+imageio-ffmpeg>=0.5    # tools/render_video.py: ffmpeg binary for annotated videos
+pytest>=8              # tests/

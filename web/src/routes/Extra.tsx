@@ -43,13 +43,16 @@ export default function Extra() {
         title="What we built beyond the required pages"
         lead={
           <>
-            The task lists ideas that earn extra credit. Each card below says what exists, shows it
-            working on the real results, and states what is missing. Two of them cannot be done
-            honestly without labels, and say so rather than show a number.
+            The task lists six ideas that earn extra credit. Each card below says what exists, shows it
+            working on the real results, and states what is missing: error analysis needs dev labels
+            we do not have, and the dashboard and live mode stop where the scene geometry does (lane
+            lines only on the east-bound approach; no calibrated scene for a webcam). Nothing is filled
+            in with a guessed number.
           </>
         }
       >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <Checklist />
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <Card
             n="01"
             title="Interactive analysis"
@@ -70,13 +73,14 @@ export default function Extra() {
           <Card
             n="02"
             title="Operator dashboard"
-            status={<Tag tone="ok">live</Tag>}
+            status={<Tag tone="ok">live &middot; regions, not lanes</Tag>}
             to="/dashboard"
             cta="Open the dashboard"
             limits={
               <>
-                Per <em>region</em>, not per lane: the scene has crossings and direction zones but no lane
-                polygons. Rates are normalised from {(footage / 60).toFixed(1)} minutes of recorded clips.
+                Per <em>region</em>, not per lane: lane lines exist only on the east-bound approach, where
+                they drive illegal_turn and solid_line_crossing, and events are not assigned to lanes yet.
+                Rates are normalised from {(footage / 60).toFixed(1)} minutes of recorded clips.
               </>
             }
           >
@@ -94,7 +98,7 @@ export default function Extra() {
           <Card
             n="03"
             title="Pipeline ablations"
-            status={ablation ? <Tag tone="ok">measured</Tag> : <Tag tone="off">not run here</Tag>}
+            status={ablation ? <Tag tone="ok">measured &middot; no accuracy</Tag> : <Tag tone="off">not run here</Tag>}
             to="#ablations"
             cta="See the numbers"
             limits="Efficiency and agreement only: without labels no configuration can be called more accurate. Runs on a 60 s window of a 720p proxy, on a laptop CPU."
@@ -165,7 +169,7 @@ export default function Extra() {
         lead={
           <>
             Every configuration below runs the real Part A code end to end: decode, detector, tracker,
-            alignment, signal phase and the eight rules. Only the configuration changes. With no labels,
+            alignment, signal phase and the {IMPLEMENTED_CLASSES.length} event rules. Only the configuration changes. With no labels,
             the honest comparison is cost and agreement: how much each run spends, what it emits, and how
             many of the baseline&rsquo;s events it reproduces.
           </>
@@ -248,6 +252,106 @@ export default function Extra() {
 }
 
 /* ------------------------------------------------------------------ pieces */
+
+type Status = "done" | "partial" | "missing";
+
+/** The six ideas exactly as the task words them, and how far each one goes here. */
+const IDEAS: { n: string; idea: string; status: Status; note: string; href: string }[] = [
+  {
+    n: "01",
+    idea: "Interactive charts instead of static images; click an event on the timeline to jump the video to it.",
+    status: "done",
+    note: "One clock for video, timeline, risk curve, event list and monitor, on every sample and every upload.",
+    href: "/samples",
+  },
+  {
+    n: "02",
+    idea: "A dashboard view: events per hour, per lane, per class, as an operator would see it.",
+    status: "partial",
+    note: "Per class, per hour (normalised), per clip and per scene region. Not per lane: lanes are drawn only on the east-bound approach, for the lane rules.",
+    href: "/dashboard",
+  },
+  {
+    n: "03",
+    idea: "Ablations: detector A vs B, with and without tracking, different frame rates, with the numbers.",
+    status: "done",
+    note: "All three, measured end to end: runtime, detections, tracks, events and agreement. Not accuracy: no labels.",
+    href: "#ablations",
+  },
+  {
+    n: "04",
+    idea: "Error analysis on your own dev labels of the sample videos; confusion between classes.",
+    status: "missing",
+    note: "No dev labels exist, so no confusion matrix, precision or recall. Only label-free symptoms are shown.",
+    href: "#error-analysis",
+  },
+  {
+    n: "05",
+    idea: "Running the demo on a live stream or a webcam.",
+    status: "partial",
+    note: "Webcam or a real-time clip: detection and tracking live. Events and risk run on uploaded clips only.",
+    href: "/demo#live",
+  },
+  {
+    n: "06",
+    idea: "Anything else you think an organizer or a city traffic centre would want to see.",
+    status: "done",
+    note: "A traffic monitor beside every player: risk against θ, signal phase, objects in frame, active events.",
+    href: "/samples",
+  },
+];
+
+const STATUS: Record<Status, { label: string; tone: "ok" | "default" | "off"; mark: string }> = {
+  done: { label: "implemented", tone: "ok", mark: "\u2713" },
+  partial: { label: "partial", tone: "default", mark: "\u25D0" },
+  missing: { label: "needs labels", tone: "off", mark: "\u2013" },
+};
+
+function Checklist() {
+  return (
+    <Panel className="p-0">
+      <h3 className="border-b border-line px-4 py-3 text-sm font-semibold">
+        The task&rsquo;s six extra-credit ideas, at a glance
+      </h3>
+      <ol className="divide-y divide-linesoft">
+        {IDEAS.map((it) => {
+          const st = STATUS[it.status];
+          const body = (
+            <>
+              <span className="num text-sm text-accent">{it.n}</span>
+              <span className="min-w-0">
+                <span className="block text-[13px] text-text">&ldquo;{it.idea}&rdquo;</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-faint">{it.note}</span>
+              </span>
+              <span className="justify-self-end">
+                <Tag tone={st.tone}>
+                  <span aria-hidden="true" className="mr-1">
+                    {st.mark}
+                  </span>
+                  {st.label}
+                </Tag>
+              </span>
+            </>
+          );
+          const cls = "grid grid-cols-[2rem_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 transition-colors hover:bg-panel2";
+          return (
+            <li key={it.n}>
+              {it.href.startsWith("#") ? (
+                <a href={it.href} className={cls}>
+                  {body}
+                </a>
+              ) : (
+                <Link to={it.href} className={cls}>
+                  {body}
+                </Link>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </Panel>
+  );
+}
 
 function Card({
   n,
@@ -459,7 +563,7 @@ function Ablation({ data }: { data: AblationData }) {
       </div>
 
       <Panel className="p-0">
-        <div className="thin-scroll overflow-x-auto">
+        <div className="thin-scroll relative overflow-x-auto">
           <table className="w-full min-w-[980px] border-collapse text-left text-xs">
             <thead className="text-faint">
               <tr className="border-b border-line">
@@ -469,8 +573,12 @@ function Ablation({ data }: { data: AblationData }) {
                 <th className="px-2 py-2.5 text-right font-medium">tracks</th>
                 <th className="px-2 py-2.5 text-right font-medium">trajectories</th>
                 <th className="px-2 py-2.5 font-medium">events by class</th>
-                <th className="px-2 py-2.5 text-right font-medium">shared w/ baseline</th>
-                <th className="px-2 py-2.5 text-right font-medium">shared w/ submission</th>
+                <th className="px-2 py-2.5 text-right font-medium" title="Agreement with the baseline run, not accuracy">
+                  agrees w/ baseline
+                </th>
+                <th className="px-2 py-2.5 text-right font-medium" title="Agreement with predictions_samples.json, not accuracy">
+                  agrees w/ submission
+                </th>
                 <th className="px-2 py-2.5 text-right font-medium">detect s</th>
                 <th className="px-2 py-2.5 text-right font-medium">track + rules s</th>
                 <th className="px-4 py-2.5 text-right font-medium">&times; video time</th>
@@ -505,6 +613,7 @@ function Ablation({ data }: { data: AblationData }) {
                         .map(([c, k]) => (
                           <span key={c} className="num inline-flex items-center gap-1 text-[10px] text-muted" title={classLabel(c)}>
                             <LineKey color={classColor(c)} />
+                            <span className="sr-only">{classLabel(c)}</span>
                             {k}
                           </span>
                         ))}
@@ -527,9 +636,11 @@ function Ablation({ data }: { data: AblationData }) {
           </table>
         </div>
         <p className="border-t border-linesoft px-4 py-2.5 text-[11px] leading-relaxed text-faint">
-          Generated by <span className="num">{data.command}</span> at <span className="num">{data.generated_at}</span>. &ldquo;shared w/
-          submission&rdquo; compares with predictions_samples.json cut to the same window &mdash; that run saw the 4K original,
-          so it also shows how representative the proxy is.
+          Generated by <span className="num">{data.command}</span> at <span className="num">{data.generated_at}</span>.{" "}
+          <b className="text-muted">&ldquo;Agrees&rdquo; means the same class at tIoU &ge; {data.match_iou} with the other run &mdash; agreement, not
+          accuracy:</b> two runs can agree on the same wrong event, and no row here is compared with ground truth, because none
+          exists. &ldquo;Agrees w/ submission&rdquo; compares with predictions_samples.json cut to the same window &mdash; that run
+          saw the 4K original, so it also shows how representative the proxy is.
         </p>
       </Panel>
 
@@ -542,8 +653,11 @@ function Ablation({ data }: { data: AblationData }) {
           </div>
         </Panel>
         <Panel className="p-4">
-          <h3 className="text-sm font-semibold">Events emitted, and how many the baseline also emits</h3>
-          <p className="mt-1 text-[11px] text-faint">Bar = events the run emits; solid part = shared with the baseline.</p>
+          <h3 className="text-sm font-semibold">Events emitted, and how many agree with the baseline</h3>
+          <p className="mt-1 text-[11px] text-faint">
+            Bar = events the run emits; solid part = also emitted by the baseline. Agreement between configurations, not
+            correctness.
+          </p>
           <ul className="mt-3 space-y-1.5">
             {data.runs.map((r) => (
               <li key={r.id} className="grid grid-cols-[minmax(0,9.5rem)_1fr_3.5rem] items-center gap-2 text-[11px]">
@@ -569,7 +683,7 @@ function Ablation({ data }: { data: AblationData }) {
                 <b className="text-text">Detector.</b> {b3.detector} spends {(b3.seconds.perception / Math.max(b3.frames, 1) * 1000).toFixed(0)} ms
                 per frame against {(base.seconds.perception / Math.max(base.frames, 1) * 1000).toFixed(0)} ms for {base.detector} and
                 keeps {b3.detections.toLocaleString()} boxes to {base.detections.toLocaleString()}; it emits {b3.events.length} events,{" "}
-                {b3.shared_with_baseline} of them shared with the baseline&rsquo;s {base.events.length}.
+                {b3.shared_with_baseline} of them also in the baseline&rsquo;s {base.events.length}.
               </li>
             )}
             <li>
@@ -579,6 +693,10 @@ function Ablation({ data }: { data: AblationData }) {
                 .map((r) => `${Math.round(r.fps)} fps → ${r.seconds.perception.toFixed(0)} s, ${r.events.length} events`)
                 .join("; ")}
               . The tracker&rsquo;s patience is counted in frames, so at lower rates it also holds a lost track for longer in seconds.
+            </li>
+            <li>
+              <b className="text-text">What this cannot say.</b> Which configuration is <em>more accurate</em>. A run that matches the
+              baseline is consistent with it, not better or worse; that needs the labelled dev set described in 04.
             </li>
             {notrack && (
               <li>
