@@ -184,7 +184,7 @@ python scripts/build_event_facts.py                   # events.json: evidence tr
 
 # 2. the live-demo backend (imports src/traffic directly; uses the GPU if present)
 pip install -r server/requirements.txt
-uvicorn server.app:app --host 127.0.0.1 --port 8000   # --host 0.0.0.0 on a server
+uvicorn server.app:app --host 127.0.0.1 --port 8000   # on the GPU server: ./start.sh
 
 # 3. the frontend
 cd web && npm install
@@ -193,11 +193,12 @@ npm run build      # production build into web/dist
 ```
 
 `server/app.py` serves `web/dist` when that directory exists, so a production
-deployment is a single origin: build the frontend, then run uvicorn.
-[`deploy/README.md`](deploy/README.md) gives the exact commands for running it straight
-from a checkout on a GPU server behind Cloudflare Tunnel (no Docker, no root), and for
-the alternative [`deploy/Dockerfile`](deploy/Dockerfile) image on a Hugging Face Space
-(the website image, not the submission's install path). For a split deployment (static
+deployment is a single origin: build the frontend, then run [`./start.sh`](start.sh),
+which starts FastAPI and a Cloudflare Quick Tunnel in front of it (Ctrl+C stops both).
+[`deploy/README.md`](deploy/README.md) gives the setup for running it straight from a
+checkout on a GPU server (no Docker, no root), and for the alternative
+[`deploy/Dockerfile`](deploy/Dockerfile) image on a Hugging Face Space (the website
+image, not the submission's install path). For a split deployment (static
 host + separate API), set `VITE_API_BASE` at build time and `DEMO_CORS_ORIGINS` on the server.
 
 Demo limits are `DEMO_MAX_DURATION_SEC` (default 120; `0` turns it off; there is no

@@ -5,23 +5,26 @@ from `web/dist` **and** the inference API under `/api`, on one origin. It runs e
 directly from a checkout on a GPU server (below, no Docker and no root) or as the
 Docker image in this folder (a Hugging Face Space, further down).
 
-## Direct on a GPU server behind Cloudflare Tunnel (no Docker, no root)
+## Direct on a GPU server behind a Cloudflare Quick Tunnel (no Docker, no root)
 
 ```
-browser ── HTTPS ──> Cloudflare ── Tunnel ──> cloudflared on the server ──> http://localhost:8000
-                                                                              uvicorn server.app:app
-                                                                              ├─ web/dist (the site)
-                                                                              └─ /api (CUDA inference)
+browser ── HTTPS ──> Cloudflare ── Quick Tunnel ──> cloudflared on the server ──> http://localhost:8000
+                                                                                    uvicorn server.app:app
+                                                                                    ├─ web/dist (the site)
+                                                                                    └─ /api (CUDA inference)
 ```
 
-Everything runs as an ordinary user from the repository directory; nothing is installed
-system-wide and no path is hard-coded, so the checkout can live anywhere. `PY` below is
-a Python ≥ 3.10 whose PyTorch already sees the GPU (an existing environment, or a new
-venv with `torch`/`torchvision` installed for the machine's CUDA).
+Everything runs as an ordinary user from the checkout; nothing is installed system-wide
+and no path is hard-coded. [`start.sh`](../start.sh) looks for two things in the checkout
+or its parent directory: `.venv-wiut/`, a Python ≥ 3.10 environment whose PyTorch already
+sees the GPU, and `cloudflared`, the single-file binary from Cloudflare (a Quick Tunnel
+needs no account or login).
+
+### One-time setup
 
 ```bash
 git clone https://github.com/friidom/CV-PIPS-Project.git && cd CV-PIPS-Project
-PY=/path/to/python          # e.g. ../.venv/bin/python
+PY=../.venv-wiut/bin/python   # or .venv-wiut/bin/python: wherever the environment is
 
 # 1. the GPU, as PyTorch sees it (what matters is torch's own CUDA runtime, not nvcc's version)
 $PY -c "import torch, torchvision; print(torch.__version__, torchvision.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
@@ -34,24 +37,57 @@ $PY -m pip install -r server/requirements.txt "torch==$($PY -c 'import torch; pr
 #    export PATH="$HOME/node-v22.20.0-linux-x64/bin:$PATH")
 (cd web && npm ci --no-audit --no-fund && npm run build)
 
-# 4. start it; one worker, because jobs and live sessions live in the process's memory
-OMP_NUM_THREADS=16 nohup $PY -m uvicorn server.app:app \
-    --host 0.0.0.0 --port 8000 --workers 1 --timeout-keep-alive 75 > server.log 2>&1 &
-echo $! > server.pid
-
-# 5. check it from the server itself
-curl -s http://localhost:8000/api/health            # {"ok":true,"models":"ready",...} once loaded
-curl -s http://localhost:8000/api/capabilities      # "device":"cuda:0","gpu":"<the GPU's name>"
-grep "models ready" server.log                      # [server] models ready on cuda:0 (<GPU name>)
-
-# stop:  kill "$(cat server.pid)"
+# 4. the tunnel binary, if it is not there yet (Linux x86-64)
+curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x cloudflared
 ```
 
-Then point the tunnel (configured separately, with its credentials kept outside the
-repository) at `http://localhost:8000`. Notes for this setup:
+### Start, check, stop
 
-- **Binding.** `--host 0.0.0.0` accepts connections on every interface; when cloudflared
-  runs on the same machine, `--host 127.0.0.1` is enough and exposes nothing else.
+```bash
+git pull
+./start.sh
+```
+
+That one command starts FastAPI and the Cloudflare Quick Tunnel, and stays in the
+foreground:
+
+1. **FastAPI:** `python -m uvicorn server.app:app --host 0.0.0.0 --port 8000 --workers 1
+   --timeout-keep-alive 75` from `.venv-wiut`, under `env -u LD_LIBRARY_PATH` (the B200
+   CUDA/cuDNN workaround), with `OMP_NUM_THREADS=16` and `DEMO_MAX_DURATION_SEC=120`.
+   These values are set in `start.sh` itself (there is no `.env` file); edit the script to
+   change them. One worker, because jobs and live sessions live in the process's memory.
+   Log: `server.log`, PID: `server.pid`.
+2. **Quick Tunnel:** once `GET /api/health` answers, `cloudflared tunnel --url
+   http://localhost:8000`. Log: `cloudflared.log`.
+
+It then prints the local URL and the public `https://….trycloudflare.com` URL; the public
+URL changes every time a new tunnel starts.
+
+- **Stop:** press Ctrl+C (or send SIGTERM to `start.sh`). It stops cloudflared and
+  FastAPI and removes `server.pid`. If either process exits on its own, the script stops
+  the other and exits.
+- **No duplicates:** it refuses to start while `server.pid` names a running process (a
+  second `./start.sh`, even one still loading) or while anything else listens on port 8000.
+- **After a pull that changes the site**, rebuild before starting:
+  `(cd web && npm ci --no-audit --no-fund && npm run build)`. `start.sh` warns when
+  `web/dist` is missing or older than `web/`.
+- **Logging out:** the script lives as long as its terminal. Run it inside tmux/screen,
+  or `nohup ./start.sh >/dev/null 2>&1 &` (the public URL is then in `cloudflared.log`;
+  stop it with `kill $(cat server.pid)`).
+
+Check it from the server itself:
+
+```bash
+curl -s http://localhost:8000/api/health         # {"ok":true,"models":"ready",...} once loaded
+curl -s http://localhost:8000/api/capabilities   # "device":"cuda:0", "gpu":"<GPU name>", "max_duration_sec":120.0
+grep "models ready" server.log                   # [server] models ready on cuda:0 (<GPU name>)
+```
+
+Notes for this setup:
+
+- **Binding.** `--host 0.0.0.0` accepts connections on every interface; cloudflared runs
+  on the same machine, so `--host 127.0.0.1` in `start.sh` would be enough and expose
+  nothing else.
 - **Uploads.** The server sets no file-size limit, only a clip-length one
   (`DEMO_MAX_DURATION_SEC`, which the page reads from `/api/capabilities`). Cloudflare
   still refuses request bodies over 100 MB on its free plan, so a larger file fails at

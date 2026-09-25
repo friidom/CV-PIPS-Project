@@ -36,6 +36,9 @@ venv/
 cert.pem
 .env
 .env.*
+# start.sh's tunnel binary and Python environment, when they sit in the checkout
+/cloudflared
+/.venv-wiut
 
 # Website
 web/node_modules/
@@ -44,3 +47,4 @@ web/.vite/
 server/.jobs/
 server.log
 server.pid
+cloudflared.log
