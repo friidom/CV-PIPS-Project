@@ -5,7 +5,7 @@
 
 Endpoints
     GET  /api/health              liveness for uptime checks; never loads a model
-    GET  /api/capabilities        device, model names and the accepted upload limits
+    GET  /api/capabilities        device, model names and the accepted clip length
     POST /api/jobs                multipart .mp4 -> {id}
     GET  /api/jobs/{id}           progress, or the full result once finished
     GET  /api/jobs/{id}/stream    the same payload as server-sent events
@@ -40,7 +40,7 @@ sys.path.insert(0, str(ROOT))
 from server import inference, live  # noqa: E402
 from server.jobs import store  # noqa: E402
 
-MAX_UPLOAD_BYTES = int(os.environ.get("DEMO_MAX_UPLOAD_MB", "200")) * 1024 * 1024
+# Longest accepted clip in seconds; 0 turns the check off. There is no file-size cap.
 MAX_DURATION_SEC = float(os.environ.get("DEMO_MAX_DURATION_SEC", "120"))
 # Uploads waiting behind the running one; each holds its file on disk until processed.
 MAX_QUEUE = int(os.environ.get("DEMO_MAX_QUEUE", "3"))
@@ -114,7 +114,6 @@ async def capabilities() -> dict:
         "gpu": gpu,
         "detector": "YOLO11m 1280x736 (TorchScript, COCO)",
         "risk_detector": "YOLO11s 960x544 (TorchScript, COCO)",
-        "max_upload_bytes": MAX_UPLOAD_BYTES,
         "max_duration_sec": MAX_DURATION_SEC,
         "classes": inference.CLASSES,
         "queue_depth": store.queue_depth(),
@@ -124,12 +123,17 @@ async def capabilities() -> dict:
     }
 
 
+def _check_duration(seconds: float) -> None:
+    if MAX_DURATION_SEC > 0 and seconds > MAX_DURATION_SEC:
+        raise HTTPException(
+            413,
+            f"Clip is {seconds:.0f} s; the demo accepts up to {MAX_DURATION_SEC:.0f} s. "
+            "Trim it and try again.",
+        )
+
+
 @app.post("/api/jobs")
 async def create_job(request: Request) -> dict:
-    # Checked before the body is read: Starlette would otherwise spool all of it to disk first.
-    too_big = f"File is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
-    if int(request.headers.get("content-length") or 0) > MAX_UPLOAD_BYTES + CHUNK:
-        raise HTTPException(413, too_big)
     if store.queue_depth() >= MAX_QUEUE:
         raise HTTPException(503, f"{MAX_QUEUE} clips are already waiting. Try again in a few minutes.")
 
@@ -142,13 +146,9 @@ async def create_job(request: Request) -> dict:
             raise HTTPException(415, "Only .mp4 files are accepted.")
 
         job = store.create(name)
-        size = 0
         try:
             with job.path.open("wb") as fh:
                 while chunk := await file.read(CHUNK):
-                    size += len(chunk)
-                    if size > MAX_UPLOAD_BYTES:
-                        raise HTTPException(413, too_big)
                     fh.write(chunk)
         except BaseException:
             store.discard(job)
@@ -160,12 +160,7 @@ async def create_job(request: Request) -> dict:
         info = probe(str(job.path))
         if info.n_frames <= 0 or info.fps <= 0:
             raise HTTPException(400, "This file has no readable video stream.")
-        if info.duration > MAX_DURATION_SEC:
-            raise HTTPException(
-                413,
-                f"Clip is {info.duration:.0f} s; the demo accepts up to {MAX_DURATION_SEC:.0f} s. "
-                "Trim it and try again.",
-            )
+        _check_duration(info.duration)
     except HTTPException:
         store.discard(job)
         raise
