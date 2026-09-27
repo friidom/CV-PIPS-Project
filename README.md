@@ -264,7 +264,7 @@ explicit "not available" card in its place.
 |---|---|---|---|
 | Plaxov Ilya (U2410060) | model and pipeline | the technical side of the model: detection, tracking, scene alignment, the event rules and the Part B risk model, and fitting the pipeline into the time budget | [GitHub](https://github.com/nasik666) · [LinkedIn](https://www.linkedin.com/in/ilya-plaxov-312452359/) |
 | Aminjonov Kamoliddin (U2410032) | website and live demo | the website, its charts and the live demo, and their deployment with the inference server on the GPU host | [GitHub](https://github.com/friidom) · [LinkedIn](https://www.linkedin.com/in/kamoliddin-aminjonov-829547359) |
-| Sunnat (U2410052) | research and evaluation | everything outside the model and the website: information gathering, the dev-set labels, checking the submission end to end, the documentation | [LinkedIn](https://uz.linkedin.com/in/sunnat-begiev-40ba1643a) |
+| Begiyev Sunnat (U2410052) | research and evaluation | everything outside the model and the website: information gathering, the dev-set labels, checking the submission end to end, the documentation | [LinkedIn](https://uz.linkedin.com/in/sunnat-begiev-40ba1643a) |
 
-The website's Team page renders the same information from `web/src/content/team.ts`;
-keep the two in sync.
+The website's Team page renders the same information, plus each member's previous projects,
+from `web/src/content/team.ts`; keep the two in sync.

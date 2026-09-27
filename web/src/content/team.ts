@@ -49,6 +49,17 @@ export const TEAM: TeamMember[] = [
     areas: ["perception", "tracking", "scene", "rules", "risk"],
     github: "https://github.com/nasik666",
     linkedin: "https://www.linkedin.com/in/ilya-plaxov-312452359/",
+    previous: [
+      {
+        name: "Interactive 3D avatars of historical figures",
+        note: "at UZINFOCOM: API routing and dialogue logic for 15 Unreal Engine 5 avatars for the State Museum of Memory of Victims of Repression, lip-synced in real time with NVIDIA Audio2Face",
+      },
+      { name: "HoloBox assistant “Muxlisa”", note: "an interactive 3D character in Unreal Engine 5.6 with neural facial animation" },
+      {
+        name: "Speech-to-speech assistant",
+        note: "GigaAM multilingual speech recognition, an LLM endpoint and TTS in one pipeline, and a RAG system over historical texts",
+      },
+    ],
   },
   {
     name: "Aminjonov Kamoliddin",
@@ -59,15 +70,33 @@ export const TEAM: TeamMember[] = [
     areas: ["website"],
     github: "https://github.com/friidom",
     linkedin: "https://www.linkedin.com/in/kamoliddin-aminjonov-829547359",
+    previous: [
+      {
+        name: "Kanban task platform",
+        note: "a Jira/Linear-style board in React, TypeScript and Supabase: drag-and-drop across columns, Epic → Task → Subtask, calendar and timeline views",
+      },
+      { name: "REST API backend", url: "https://github.com/friidom/express-backend", note: "Node.js, Express and TypeScript on PostgreSQL with Prisma" },
+      { name: "VANLIFE", url: "https://github.com/friidom/van-life", note: "a responsive React front end, deployed on Netlify" },
+    ],
   },
   {
-    name: "Sunnat",
+    name: "Begiyev Sunnat",
     role: "Research and evaluation",
     contribution:
       "Everything outside the model and the website: gathering the information the work started from, " +
       "labelling the dev set, checking the submission end to end, and the documentation.",
     areas: ["research"],
     linkedin: "https://uz.linkedin.com/in/sunnat-begiev-40ba1643a",
+    previous: [
+      {
+        name: "CTF labs and network auditing",
+        note: "TryHackMe and Hack The Box: port scanning and traffic analysis with Nmap and Wireshark, log analysis, privilege escalation in isolated labs",
+      },
+      {
+        name: "Bug bounty and vulnerability assessment",
+        note: "independent, small-scale programmes: web resources checked for common vulnerabilities, HTTP traffic and application logic analysed, security reports written",
+      },
+    ],
   },
 ];
 
