@@ -50,7 +50,11 @@ export function submitVideo(
       else
         reject(
           new ApiError(
-            typeof body?.detail === "string" ? body.detail : xhr.statusText || `upload failed (${xhr.status})`,
+            typeof body?.detail === "string"
+              ? body.detail
+              : xhr.status === 413 // refused by the proxy in front of the server, which answers without JSON
+                ? "The file is larger than the upload limit in front of the server. Trim or re-encode it and try again."
+                : xhr.statusText || `upload failed (${xhr.status})`,
             xhr.status,
           ),
         );

@@ -15,6 +15,7 @@ export const WORK_AREAS = [
   { id: "rules", area: "Event rules", detail: "Ten class rules, lane geometry, temporal post-processing, the labelling tool" },
   { id: "risk", area: "Part B", detail: "Causal risk model: conflict, red-runner and braking cues" },
   { id: "website", area: "Website", detail: "This site, the live-demo inference server and its deployment" },
+  { id: "research", area: "Research and evaluation", detail: "Information gathering, the dev-set labels in labels/, checking the submission end to end, the README" },
 ] as const;
 
 export type WorkAreaId = (typeof WORK_AREAS)[number]["id"];
@@ -36,12 +37,38 @@ export interface TeamMember {
   previous?: { name: string; url?: string; note?: string }[];
 }
 
-export const TEAM_NAME = "wiut-cv";
+export const TEAM_NAME = "PIPS";
 
 export const TEAM: TeamMember[] = [
-  { name: null, role: null, contribution: null },
-  { name: null, role: null, contribution: null },
-  { name: null, role: null, contribution: null },
+  {
+    name: "Plaxov Ilya",
+    role: "Model and pipeline",
+    contribution:
+      "The technical side of the model: detection, tracking, scene alignment, the event rules and the " +
+      "Part B risk model, and fitting the whole pipeline into the time budget.",
+    areas: ["perception", "tracking", "scene", "rules", "risk"],
+    github: "https://github.com/nasik666",
+    linkedin: "https://www.linkedin.com/in/ilya-plaxov-312452359/",
+  },
+  {
+    name: "Aminjonov Kamoliddin",
+    role: "Website and live demo",
+    contribution:
+      "The website: every page, its charts and the live demo, and its deployment together with the " +
+      "inference server on the GPU host.",
+    areas: ["website"],
+    github: "https://github.com/friidom",
+    linkedin: "https://www.linkedin.com/in/kamoliddin-aminjonov-829547359",
+  },
+  {
+    name: "Sunnat",
+    role: "Research and evaluation",
+    contribution:
+      "Everything outside the model and the website: gathering the information the work started from, " +
+      "labelling the dev set, checking the submission end to end, and the documentation.",
+    areas: ["research"],
+    linkedin: "https://uz.linkedin.com/in/sunnat-begiev-40ba1643a",
+  },
 ];
 
 export const isPlaceholder = (m: TeamMember): boolean => !m.name;
@@ -59,3 +86,6 @@ export function missingFields(m: TeamMember): string[] {
   if (!m.previous?.length) out.push("previous projects");
   return out;
 }
+
+/** Fields without which a card cannot stand in front of a visitor at all. */
+export const missingCore = (m: TeamMember): boolean => !m.name || !m.role || !m.contribution;

@@ -1,11 +1,12 @@
 import { Callout, Panel, Section } from "../components/ui";
 import { REPO_URL } from "../content/links";
-import { TEAM, TEAM_NAME, WORK_AREAS, isPlaceholder, missingFields, type TeamMember } from "../content/team";
+import { TEAM, TEAM_NAME, WORK_AREAS, isPlaceholder, missingCore, missingFields, type TeamMember } from "../content/team";
 
 const memberName = (m: TeamMember, i: number) => m.name ?? `Member ${i + 1}`;
 
 export default function Team() {
-  const gaps = TEAM.map((m, i) => ({ who: memberName(m, i), missing: missingFields(m) })).filter((g) => g.missing.length);
+  // Only an entry without a name, role or contribution is unfinished; absent links are simply not shown.
+  const gaps = TEAM.filter(missingCore).map((m) => ({ who: memberName(m, TEAM.indexOf(m)), missing: missingFields(m) }));
 
   return (
     <div className="mx-auto max-w-[1320px] space-y-12 px-4 py-10 sm:py-14">

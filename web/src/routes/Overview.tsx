@@ -8,7 +8,7 @@ import { byClassOrder, classColor, classLabel, CLASSES, IMPLEMENTED_CLASSES } fr
 import { group } from "../lib/format";
 import { useCountUp, usePointerParallax, useReveal } from "../lib/hooks";
 import type { OverlayData } from "../lib/overlay";
-import type { FlowFieldData, Manifest, SampleData, SceneData } from "../lib/types";
+import type { DevEval, FlowFieldData, Manifest, SampleData, SceneData } from "../lib/types";
 
 const SAMPLE_IDS = ["C3896", "C3897", "C3902", "C3905"];
 
@@ -19,6 +19,7 @@ export default function Overview() {
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [samples, setSamples] = useState<SampleData[]>([]);
   const [replay, setReplay] = useState<OverlayData | null>(null);
+  const [dev, setDev] = useState<DevEval | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -31,6 +32,7 @@ export default function Overview() {
       setManifest(m);
       const hero = m?.summary?.hero_replay;
       if (hero) void loadData<OverlayData>(`replay/${hero}.json`, ac.signal).then(setReplay);
+      if (m?.metrics.available && m.metrics.path) void loadData<DevEval>(m.metrics.path, ac.signal).then(setDev);
     });
     return () => ac.abort();
   }, []);
@@ -230,12 +232,21 @@ export default function Overview() {
               cta="Per-class status"
               body={`${CLASSES.filter((c) => c.rule === null).map((c) => c.id).join(", ")} are never emitted. They are removed from CLASSES rather than guessed at, because a class you predict but never get right is averaged into Score A as a zero.`}
             />
-            <HonestCard
-              title="No Score A or Score B yet"
-              to="/results"
-              cta="What is and is not measured"
-              body="The sample clips shipped unlabelled and have not been annotated, so evaluate.py has no ground truth to score against. Every accuracy figure is therefore absent from this site rather than invented."
-            />
+            {dev ? (
+              <HonestCard
+                title={`Score A ${dev.score_a.toFixed(2)} on one labelled clip`}
+                to="/results#dev-set"
+                cta="What is and is not measured"
+                body={`We labelled ${Object.keys(dev.videos).join(", ")} (${dev.n_gt} events) and ran evaluate.py on it: Score A ${dev.score_a.toFixed(3)}, Score B ${dev.part_b ? dev.part_b.score_b.toFixed(2) : "undefined"}. One clip, and the rules were tuned on this footage, so it is a sanity check rather than an estimate; the other three clips are unlabelled.`}
+              />
+            ) : (
+              <HonestCard
+                title="No Score A or Score B yet"
+                to="/results"
+                cta="What is and is not measured"
+                body="The sample clips shipped unlabelled and have not been annotated, so evaluate.py has no ground truth to score against. Every accuracy figure is therefore absent from this site rather than invented."
+              />
+            )}
             <HonestCard
               title="The rules assume this camera"
               to="/eda"

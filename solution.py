@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import random
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -64,8 +65,11 @@ def _seed_torch() -> None:
 
     torch.manual_seed(SEED)
     torch.cuda.manual_seed_all(SEED)
-    torch.use_deterministic_algorithms(False)  # cuDNN conv autotune stays on; NMS is order-stable
-    torch.backends.cudnn.benchmark = True
+    torch.use_deterministic_algorithms(False)  # no op here needs it; NMS is order-stable
+    # No autotuning: benchmark mode may time its way to a different convolution algorithm on each
+    # run, and different rounding can flip a box at the confidence floor into a different event.
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 
 def _get_pipeline():
@@ -90,8 +94,9 @@ def detect_events(video_path: str) -> list[list]:
     harness would score a raised exception the same way, but an empty list keeps
     its log readable.
     """
+    started = time.perf_counter()  # the harness's budget clock includes loading the models
     try:
-        return _get_pipeline().detect_events(video_path, classes=CLASSES)
+        return _get_pipeline().detect_events(video_path, classes=CLASSES, started=started)
     except Exception as exc:  # noqa: BLE001 - one bad video must not end the run
         print(f"[solution] detect_events failed on {video_path}: {exc!r}", file=sys.stderr)
         return []
@@ -121,6 +126,11 @@ class RiskEstimator:
 
                 scene = Scene.load(ROOT / "configs")
                 detector = Detector(str(ROOT / "weights" / RISK_WEIGHTS))
+                if detector.device.type != "cuda":
+                    # Detection on every 5th frame on a CPU would carry the clip past the 3x budget,
+                    # and the harness would then void Part A's events too. Part A's deadline already
+                    # reserves the time the harness needs to decode every frame for this loop.
+                    raise RuntimeError("no CUDA device; Part B is disabled to keep Part A inside the time budget")
                 self._model = RiskModel(detector, scene, SceneMasks.build(scene).road)
             except Exception as exc:  # noqa: BLE001
                 print(f"[solution] RiskEstimator unavailable: {exc!r}", file=sys.stderr)

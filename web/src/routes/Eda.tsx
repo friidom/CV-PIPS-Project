@@ -4,7 +4,8 @@ import { SceneMap } from "../components/SceneMap";
 import { BarList, Histogram, PhaseRibbon, StackedArea } from "../components/charts";
 import { Callout, DataGap, Panel, Section, Stat } from "../components/ui";
 import { loadData } from "../lib/api";
-import { group } from "../lib/format";
+import { duration as fmtDuration, group } from "../lib/format";
+import { useElementSize } from "../lib/hooks";
 import type { DensitySeries, FlowFieldData, PhaseSeries, SampleData, SceneData } from "../lib/types";
 
 const BASE = import.meta.env.BASE_URL;
@@ -16,6 +17,102 @@ interface DetectorStats {
   box_width_px: { counts: number[]; edges: number[] };
   conf_threshold: number;
   median_width_px: number;
+}
+
+/** scripts/build_lighting.py: one 720p proxy frame per second of every clip. */
+interface LightingClip {
+  duration: number;
+  frames: number;
+  t: number[];
+  luma: number[];
+  p10: number[];
+  p90: number[];
+  dark: number[];
+  mean_luma: number;
+  /** Mean luma of the last 10 s minus that of the first 10 s. */
+  drift: number;
+}
+
+interface LightingData {
+  source: string;
+  dark_below: number;
+  clips: Record<string, LightingClip>;
+}
+
+/** Shared by every tile so they compare: the daylight 90th percentile reaches ~180. */
+const LUMA_MAX = 200;
+const TILE_H = 64;
+
+/** One clip's brightness over time, on the x-scale shared by all tiles so lengths compare too. */
+function LightingTile({ clip, data, tMax, inliers }: { clip: string; data: LightingClip; tMax: number; inliers: number | null }) {
+  const [ref, size] = useElementSize<HTMLDivElement>();
+  const [hover, setHover] = useState<number | null>(null);
+  const w = size.width || 280;
+  const x = (t: number) => (t / tMax) * w;
+  const y = (v: number) => TILE_H - (Math.min(v, LUMA_MAX) / LUMA_MAX) * TILE_H;
+  const path = (vals: number[]) => vals.map((v, i) => `${i ? "L" : "M"}${x(data.t[i]).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  const band = `${path(data.p90)}${data.p10
+    .map((_, k) => data.p10.length - 1 - k)
+    .map((i) => `L${x(data.t[i]).toFixed(1)},${y(data.p10[i]).toFixed(1)}`)
+    .join("")}Z`;
+  const dark = data.dark.reduce((s, v) => s + v, 0) / Math.max(data.dark.length, 1);
+
+  return (
+    <Panel className="p-4">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="num text-sm font-semibold">{clip}</h3>
+        <span className="num text-[11px] text-faint">
+          {fmtDuration(data.duration)} &middot; {group(data.frames)} frames
+        </span>
+      </div>
+      <div className="mt-2 flex items-baseline gap-2">
+        <span className="num text-2xl font-semibold tracking-tight">
+          {(hover === null ? data.mean_luma : data.luma[hover]).toFixed(0)}
+        </span>
+        <span className="text-xs text-muted">{hover === null ? "mean luma, of 255" : `luma at ${data.t[hover]} s`}</span>
+      </div>
+      <div ref={ref} className="mt-2">
+        <svg
+          width={w}
+          height={TILE_H}
+          viewBox={`0 0 ${w} ${TILE_H}`}
+          className="block w-full touch-none"
+          role="img"
+          aria-label={`${clip}: mean luma ${data.mean_luma} over ${data.duration.toFixed(0)} s`}
+          onPointerMove={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            const t = ((e.clientX - r.left) / Math.max(r.width, 1)) * tMax;
+            setHover(Math.max(0, Math.min(Math.round(t), data.t.length - 1)));
+          }}
+          onPointerLeave={() => setHover(null)}
+        >
+          <rect x={0} y={0} width={x(data.duration)} height={TILE_H} fill="var(--panel-2)" />
+          <path d={band} fill="var(--cyan)" fillOpacity={0.16} />
+          <path d={path(data.luma)} fill="none" stroke="var(--cyan)" strokeWidth={2} strokeLinejoin="round" />
+          {hover !== null && (
+            <line x1={x(data.t[hover])} x2={x(data.t[hover])} y1={0} y2={TILE_H} stroke="var(--text)" strokeWidth={1} opacity={0.6} />
+          )}
+        </svg>
+      </div>
+      <dl className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]">
+        <div>
+          <dt className="text-faint">near-black</dt>
+          <dd className="num text-text">{Math.round(dark * 100)}%</dd>
+        </div>
+        <div>
+          <dt className="text-faint">drift</dt>
+          <dd className="num text-text">
+            {data.drift > 0 ? "+" : ""}
+            {data.drift.toFixed(0)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-faint">SIFT inliers</dt>
+          <dd className="num text-text">{inliers === null ? "—" : group(inliers)}</dd>
+        </div>
+      </dl>
+    </Panel>
+  );
 }
 
 /** Each finding states what was observed and which code it changed. */
@@ -40,11 +137,17 @@ export default function Eda() {
   const [detector, setDetector] = useState<DetectorStats | null>(null);
   const [sample, setSample] = useState<SampleData | null>(null);
   const [clip, setClip] = useState("C3905");
+  const [lighting, setLighting] = useState<LightingData | null | undefined>(undefined);
+  const [inliers, setInliers] = useState<Record<string, number>>({});
 
   useEffect(() => {
     const ac = new AbortController();
     void loadData<SceneData>("eda/scene.json", ac.signal).then(setScene);
     void loadData<FlowFieldData>("eda/flow-field.json", ac.signal).then(setFlow);
+    void loadData<LightingData>("eda/lighting.json", ac.signal).then(setLighting);
+    void Promise.all(CLIPS.map((c) => loadData<SampleData>(`samples/${c}.json`, ac.signal))).then((rows) =>
+      setInliers(Object.fromEntries(rows.flatMap((r) => (r?.alignment ? [[r.id, r.alignment.inliers]] : [])))),
+    );
     return () => ac.abort();
   }, []);
 
@@ -340,10 +443,58 @@ export default function Eda() {
         )}
       </Section>
 
+      <Section
+        eyebrow="07 — Recording conditions"
+        title="Same camera, three kinds of light"
+        lead="Length, frame count and brightness of every sample clip. Brightness is BT.601 luma, one frame per second of the site's 720p proxies; all four tiles share one time axis (so their lengths compare) and one luma scale. Line: mean luma. Band: 10th to 90th percentile of the frame. Hover a tile to read a second."
+      >
+        {lighting === undefined ? (
+          <p className="text-sm text-muted">Loading…</p>
+        ) : lighting === null ? (
+          <DataGap
+            title="No lighting measurements in this checkout"
+            what="web/public/data/eda/lighting.json has not been generated."
+            fill={
+              <>
+                Run <span className="num">python scripts/build_lighting.py</span> (reads the 720p proxies).
+              </>
+            }
+          />
+        ) : (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {CLIPS.filter((c) => lighting.clips[c]).map((c) => (
+                <LightingTile
+                  key={c}
+                  clip={c}
+                  data={lighting.clips[c]}
+                  tMax={Math.max(...Object.values(lighting.clips).map((l) => l.duration))}
+                  inliers={inliers[c] ?? null}
+                />
+              ))}
+            </div>
+            <Finding
+              observation={`Two clips are daylight, two are not. ${CLIPS.filter((c) => lighting.clips[c])
+                .map((c) => `${c} averages ${lighting.clips[c].mean_luma.toFixed(0)}`)
+                .join(", ")} (of 255); the evening clip C3902 keeps darkening while it records, and in the dusk clip C3905 most of the frame is near black. Alignment follows the light: against a reference plate built from daylight C3896, SIFT keeps well over a thousand inliers on the daylight clips and about a hundred on the dark ones.`}
+              changed={
+                <>
+                  Nothing in the pipeline depends on an absolute brightness. Alignment equalises local contrast (CLAHE)
+                  before SIFT, which is what keeps the dusk clips above the 40-inlier floor; the signal reader thresholds a
+                  colour score against a sliding per-video percentile rather than a fixed level; and every speed and
+                  distance threshold is in object sizes, not in anything the light changes. The hidden test set is the
+                  same camera, so it will bring the same range of light.
+                </>
+              }
+            />
+          </>
+        )}
+      </Section>
+
       <Callout tone="note" title="Scope of this analysis">
         The scene geometry and the flow field are built from all four sample clips together.
-        Everything time-resolved on this page is one clip at a time — pick it above; the charts come
-        from that clip&rsquo;s own perception cache.
+        Everything time-resolved above the recording conditions is one clip at a time — pick it above; those
+        charts come from that clip&rsquo;s own perception cache. The recording-conditions tiles show all four clips.
       </Callout>
     </div>
   );

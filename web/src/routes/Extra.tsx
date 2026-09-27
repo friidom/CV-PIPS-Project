@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { ConfusionTable } from "../components/DevEval";
 import { findAlarms, THETA } from "../components/RiskCurve";
 import { Callout, DataGap, Panel, Section, Tag } from "../components/ui";
 import { EventTip, LineKey, Tip } from "../components/viz";
@@ -8,7 +9,7 @@ import { byClassOrder, classColor, classLabel, CLASSES, IMPLEMENTED_CLASSES } fr
 import type { EventFacts } from "../lib/events";
 import { timecode } from "../lib/format";
 import { useElementSize } from "../lib/hooks";
-import type { AblationData, AblationRun, SampleData } from "../lib/types";
+import type { AblationData, AblationRun, DevEval, Manifest, SampleData } from "../lib/types";
 
 const CLIPS = ["C3896", "C3897", "C3902", "C3905"];
 const SHORT_SEC = 1.0;
@@ -17,6 +18,7 @@ export default function Extra() {
   const [samples, setSamples] = useState<SampleData[]>([]);
   const [facts, setFacts] = useState<EventFacts | null>(null);
   const [ablation, setAblation] = useState<AblationData | null | undefined>(undefined);
+  const [dev, setDev] = useState<DevEval | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -25,8 +27,13 @@ export default function Extra() {
     );
     void loadData<EventFacts>("events.json", ac.signal).then(setFacts);
     void loadData<AblationData>("ablation.json", ac.signal).then(setAblation);
+    void loadData<Manifest>("manifest.json", ac.signal).then((m) => {
+      if (m?.metrics.available && m.metrics.path) void loadData<DevEval>(m.metrics.path, ac.signal).then(setDev);
+    });
     return () => ac.abort();
   }, []);
+  const devClips = dev ? Object.keys(dev.videos) : [];
+  const devErrors = dev ? dev.classes.reduce((n, c) => n + c.fp + c.fn, 0) : 0;
 
   const all = useMemo(() => samples.flatMap((s) => s.events.map((e) => ({ clip: s.id, e }))), [samples]);
   const footage = samples.reduce((n, s) => n + s.meta.duration, 0);
@@ -44,14 +51,17 @@ export default function Extra() {
         lead={
           <>
             The task lists six ideas that earn extra credit. Each card below says what exists, shows it
-            working on the real results, and states what is missing: error analysis needs dev labels
-            we do not have, and the dashboard and live mode stop where the scene geometry does (lane
+            working on the real results, and states what is missing:{" "}
+            {dev
+              ? `error analysis covers the ${devClips.length === 1 ? "one clip" : `${devClips.length} clips`} we have labelled (${devClips.join(", ")}),`
+              : "error analysis needs dev labels we do not have,"}{" "}
+            and the dashboard and live mode stop where the scene geometry does (lane
             lines only on the east-bound approach; no calibrated scene for a webcam). Nothing is filled
             in with a guessed number.
           </>
         }
       >
-        <Checklist />
+        <Checklist dev={dev} />
         <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <Card
             n="01"
@@ -110,6 +120,26 @@ export default function Extra() {
             {ablation && <RuntimeBars runs={ablation.runs} compact />}
           </Card>
 
+          {dev ? (
+            <Card
+              n="04"
+              title="Error analysis"
+              status={<Tag tone="ok">on our dev labels</Tag>}
+              to="#error-analysis"
+              cta="See the confusion table"
+              limits={`${dev.n_gt} labels on ${devClips.join(", ")}, the only clip labelled so far, and footage the rules were tuned on.`}
+            >
+              <p>
+                evaluate.py against our own labels: per-class F1 at every tIoU, every false positive and false negative
+                linked to its moment in the player, and which class we emitted instead of the labelled one.
+              </p>
+              <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <Mini label="Score A" value={dev.score_a.toFixed(2)} />
+                <Mini label="labels" value={dev.n_gt} />
+                <Mini label="FP + FN @0.5" value={devErrors} />
+              </dl>
+            </Card>
+          ) : (
           <Card
             n="04"
             title="Error analysis"
@@ -128,6 +158,7 @@ export default function Extra() {
               <Mini label="classes never emitted" value={CLASSES.length - IMPLEMENTED_CLASSES.length} />
             </dl>
           </Card>
+          )}
 
           <Card
             n="05"
@@ -170,9 +201,12 @@ export default function Extra() {
         lead={
           <>
             Every configuration below runs the real Part A code end to end: decode, detector, tracker,
-            alignment, signal phase and the {IMPLEMENTED_CLASSES.length} event rules. Only the configuration changes. With no labels,
-            the honest comparison is cost and agreement: how much each run spends, what it emits, and how
-            many of the baseline&rsquo;s events it reproduces.
+            alignment, signal phase and the {IMPLEMENTED_CLASSES.length} event rules. Only the configuration changes. Each run is
+            compared on cost and agreement &mdash; how much it spends, what it emits, how many of the baseline&rsquo;s events it
+            reproduces &mdash;{" "}
+            {dev?.ablation
+              ? `and on accuracy: Score A against our labels for the same ${dev.ablation.seconds.toFixed(0)} s window.`
+              : "not on accuracy, which needs labels."}
           </>
         }
       >
@@ -189,10 +223,68 @@ export default function Extra() {
             }
           />
         ) : (
-          <Ablation data={ablation} />
+          <Ablation data={ablation} dev={dev?.ablation ?? null} />
         )}
       </Section>
 
+      {dev ? (
+        <Section
+          id="error-analysis"
+          eyebrow="04 — Error analysis"
+          title="Where our output disagrees with our labels"
+          lead={`evaluate.py reports how many events match; this section shows which ones do not, and what we emitted instead. It covers ${devClips.join(", ")}, the clip we labelled; per-class F1 and the clickable label-against-prediction timeline are on the Results page.`}
+        >
+          <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+            {devClips.map((id) => (
+              <Panel key={id} className="min-w-0 p-5">
+                <h3 className="text-sm font-semibold">Class confusion &mdash; {id}</h3>
+                <p className="mb-3 mt-1 text-[11px] leading-relaxed text-faint">
+                  Rows: the labelled class. Columns: what we emitted over that label &mdash; its own class if we emitted it
+                  at all (tIoU &ge; {dev.overlap_tiou}), otherwise the class overlapping it most, otherwise &ldquo;(missed)&rdquo;.
+                  The bottom row counts our segments with no label under them.
+                </p>
+                <ConfusionTable cells={dev.videos[id].confusion} />
+              </Panel>
+            ))}
+            <Panel className="p-5">
+              <h3 className="text-sm font-semibold">What the disagreements say</h3>
+              <ul className="mt-3 space-y-2.5 text-[13px] leading-relaxed text-muted">
+                {devClips.flatMap((id) =>
+                  dev.videos[id].confusion
+                    .filter(([row, col]) => row !== col && row !== "(no label)" && col !== "(missed)")
+                    .map(([row, col, n]) => (
+                      <li key={`${id}-${row}-${col}`}>
+                        <span className="num text-text">{row}</span> &rarr; <span className="num text-text">{col}</span>{" "}
+                        &times;{n}: {CLASSES.find((c) => c.id === row)?.rule === null ? "a class we have no detector for" : "a class our rule missed"},
+                        emitted as <span className="num">{col}</span> over the same seconds.
+                      </li>
+                    )),
+                )}
+                {devClips.map((id) => {
+                  const bare = dev.videos[id].confusion.filter(([row]) => row === "(no label)");
+                  const n = bare.reduce((s, [, , k]) => s + k, 0);
+                  return n > 0 ? (
+                    <li key={`${id}-bare`}>
+                      {n} of our segments on {id} have no label under them at all (
+                      <span className="num">{bare.map(([, col, k]) => `${col} ×${k}`).join(", ")}</span>): the
+                      over-firing side, and the first place to raise thresholds.
+                    </li>
+                  ) : null;
+                })}
+                {dev.disputed.length > 0 && (
+                  <li>
+                    One label is disputed on review ({dev.disputed.map((d) => `${d.label} at ${timecode(d.start)}`).join(", ")});
+                    it is counted anyway, and the Results page gives Score&nbsp;A without it.
+                  </li>
+                )}
+              </ul>
+              <Link to="/results#dev-set" className="mt-4 inline-block text-xs text-accent underline-offset-4 hover:underline">
+                Per-class F1 and the clickable timeline on the Results page &rarr;
+              </Link>
+            </Panel>
+          </div>
+        </Section>
+      ) : (
       <Section
         id="error-analysis"
         eyebrow="04 — Error analysis"
@@ -248,6 +340,7 @@ export default function Extra() {
           </Panel>
         </div>
       </Section>
+      )}
     </div>
   );
 }
@@ -308,14 +401,25 @@ const STATUS: Record<Status, { label: string; tone: "ok" | "default" | "off"; ma
   missing: { label: "needs labels", tone: "off", mark: "\u2013" },
 };
 
-function Checklist() {
+function Checklist({ dev }: { dev: DevEval | null }) {
+  // IDEAS describes the label-free state; dev labels add accuracy to 03 and make 04 possible.
+  const clips = dev ? Object.keys(dev.videos).join(", ") : "";
+  const ideas = IDEAS.map((it) =>
+    !dev
+      ? it
+      : it.n === "03"
+        ? { ...it, note: "All three, measured end to end: runtime, detections, tracks, events and agreement, plus Score A against our labels for the same window." }
+        : it.n === "04"
+          ? { ...it, status: "done" as Status, note: `Per-class F1, a class-confusion table and every FP/FN linked to the player, on ${clips}: the clip we labelled.` }
+          : it,
+  );
   return (
     <Panel className="p-0">
       <h3 className="border-b border-line px-4 py-3 text-sm font-semibold">
         The task&rsquo;s six extra-credit ideas, at a glance
       </h3>
       <ol className="divide-y divide-linesoft">
-        {IDEAS.map((it) => {
+        {ideas.map((it) => {
           const st = STATUS[it.status];
           const body = (
             <>
@@ -522,7 +626,9 @@ function RuntimeBars({ runs, compact = false }: { runs: AblationRun[]; compact?:
   );
 }
 
-function Ablation({ data }: { data: AblationData }) {
+function Ablation({ data, dev }: { data: AblationData; dev: DevEval["ablation"] }) {
+  const accuracy = (id: string) => dev?.runs.find((r) => r.id === id) ?? null;
+  const best = dev ? [...dev.runs].filter((r) => r.id !== "submission").sort((a, b) => b.score_a - a.score_a)[0] : null;
   const base = data.runs.find((r) => r.id === data.baseline);
   const maxEvents = Math.max(1, ...data.runs.map((r) => r.events.length));
   const perVideoSec = (r: AblationRun) => r.seconds.total / data.input.seconds;
@@ -565,10 +671,15 @@ function Ablation({ data }: { data: AblationData }) {
 
       <Panel className="p-0">
         <div className="thin-scroll relative overflow-x-auto">
-          <table className="w-full min-w-[980px] border-collapse text-left text-xs">
+          <table className={`w-full ${dev ? "min-w-[1080px]" : "min-w-[980px]"} border-collapse text-left text-xs`}>
             <thead className="text-faint">
               <tr className="border-b border-line">
                 <th className="px-4 py-2.5 font-medium">configuration</th>
+                {dev && (
+                  <th className="px-2 py-2.5 text-right font-medium" title={`Score A against our labels for the first ${dev.seconds.toFixed(0)} s`}>
+                    Score A vs labels
+                  </th>
+                )}
                 <th className="px-2 py-2.5 text-right font-medium">detector frames</th>
                 <th className="px-2 py-2.5 text-right font-medium">detections</th>
                 <th className="px-2 py-2.5 text-right font-medium">tracks</th>
@@ -602,6 +713,11 @@ function Ablation({ data }: { data: AblationData }) {
                       {r.detector}, every {r.step === 3 ? "3rd" : `${r.step}th`} frame
                     </div>
                   </td>
+                  {dev && (
+                    <td className={`num px-2 py-2 text-right ${accuracy(r.id)?.id === best?.id ? "font-semibold text-ok" : "text-text"}`}>
+                      {accuracy(r.id)?.score_a.toFixed(3) ?? "—"}
+                    </td>
+                  )}
                   <td className="num px-2 py-2 text-right text-muted">{r.frames.toLocaleString()}</td>
                   <td className="num px-2 py-2 text-right text-muted">{r.detections.toLocaleString()}</td>
                   <td className="num px-2 py-2 text-right text-muted">{r.tracks.toLocaleString()}</td>
@@ -639,8 +755,17 @@ function Ablation({ data }: { data: AblationData }) {
         <p className="border-t border-linesoft px-4 py-2.5 text-[11px] leading-relaxed text-faint">
           Generated by <span className="num">{data.command}</span> at <span className="num">{data.generated_at}</span>.{" "}
           <b className="text-muted">&ldquo;Agrees&rdquo; means the same class at tIoU &ge; {data.match_iou} with the other run &mdash; agreement, not
-          accuracy:</b> two runs can agree on the same wrong event, and no row here is compared with ground truth, because none
-          exists. &ldquo;Agrees w/ submission&rdquo; compares with predictions_samples.json cut to the same window &mdash; that run
+          accuracy:</b> two runs can agree on the same wrong event.{" "}
+          {dev ? (
+            <>
+              &ldquo;Score A vs labels&rdquo; is accuracy: <span className="num">evaluate.py</span> against our{" "}
+              {dev.gt_events} labels inside the same {dev.seconds.toFixed(0)}&nbsp;s, cut at its end (
+              <span className="num">scripts/build_dev_eval.py</span>).
+            </>
+          ) : (
+            "No row here is compared with ground truth, because none exists."
+          )}{" "}
+          &ldquo;Agrees w/ submission&rdquo; compares with predictions_samples.json cut to the same window &mdash; that run
           saw the 4K original, so it also shows how representative the proxy is.
         </p>
       </Panel>
@@ -695,10 +820,20 @@ function Ablation({ data }: { data: AblationData }) {
                 .join("; ")}
               . The tracker&rsquo;s patience is counted in frames, so at lower rates it also holds a lost track for longer in seconds.
             </li>
-            <li>
-              <b className="text-text">What this cannot say.</b> Which configuration is <em>more accurate</em>. A run that matches the
-              baseline is consistent with it, not better or worse; that needs the labelled dev set described in 04.
-            </li>
+            {dev && best ? (
+              <li>
+                <b className="text-text">Accuracy.</b> Against our labels for this window {describe(data.runs.find((r) => r.id === best.id) ?? data.runs[0])}{" "}
+                scores highest (Score&nbsp;A {best.score_a.toFixed(3)}; baseline {accuracy(data.baseline)?.score_a.toFixed(3) ?? "—"}
+                {accuracy("submission") ? `, the 4K submission ${accuracy("submission")!.score_a.toFixed(3)}` : ""}). With{" "}
+                {dev.gt_events} labels in {dev.seconds.toFixed(0)}&nbsp;s one event moves these numbers by several points, so we read
+                them as &ldquo;no configuration is clearly worse than the baseline&rdquo;, not as a reason to switch detectors.
+              </li>
+            ) : (
+              <li>
+                <b className="text-text">What this cannot say.</b> Which configuration is <em>more accurate</em>. A run that matches the
+                baseline is consistent with it, not better or worse; that needs the labelled dev set described in 04.
+              </li>
+            )}
             {notrack && (
               <li>
                 <b className="text-text">Tracking.</b> Without it, every box is its own one-frame track: {notrack.tracks.toLocaleString()} &ldquo;tracks&rdquo;,{" "}

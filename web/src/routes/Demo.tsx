@@ -15,6 +15,11 @@ import type { JobProgress, JobResult, ServerCapabilities } from "../lib/types";
 
 type Phase = "idle" | "uploading" | "running" | "done" | "error";
 
+/** The Cloudflare tunnel in front of the demo refuses request bodies over 100 MB; stay just under it. */
+const TUNNEL_MAX_BYTES = 95 * 1024 * 1024;
+const REENCODE_CMD = "ffmpeg -i clip.mp4 -vf scale=1920:-2 -c:v libx264 -crf 23 -an small.mp4";
+const REENCODE_HINT = `Re-encode it first, e.g. ${REENCODE_CMD}`;
+
 const STAGE_LABEL: Record<string, string> = {
   queued: "Queued",
   probing: "Reading the file",
@@ -81,6 +86,8 @@ export default function Demo() {
 
   // Longest clip the server accepts; 0 means no limit, undefined until the server answers.
   const maxSec = caps?.max_duration_sec;
+  // Largest file that reaches the server: its own cap when it sets one, else the tunnel's per-request limit.
+  const maxBytes = Math.min(caps?.max_upload_bytes ?? Infinity, TUNNEL_MAX_BYTES);
 
   const start = useCallback(
     async (file: File) => {
@@ -89,6 +96,11 @@ export default function Demo() {
 
       if (!/\.mp4$/i.test(file.name)) {
         setError("Only .mp4 files are accepted.");
+        setPhase("error");
+        return;
+      }
+      if (file.size > maxBytes) {
+        setError(`${file.name} is ${bytes(file.size)}; the demo accepts up to ${bytes(maxBytes)}. ${REENCODE_HINT}`);
         setPhase("error");
         return;
       }
@@ -144,7 +156,7 @@ export default function Demo() {
         window.clearInterval(poll);
       };
     },
-    [],
+    [maxBytes],
   );
 
   const resetRun = () => {
@@ -248,17 +260,23 @@ export default function Demo() {
                   <UploadMark />
                   <h2 className="mt-4 text-lg font-semibold">Drop an .mp4 here</h2>
                   <p className="mt-1.5 max-w-sm text-sm leading-relaxed text-muted">
+                    Up to <span className="num">{bytes(maxBytes)}</span>
                     {maxSec !== undefined &&
                       (maxSec > 0 ? (
                         <>
-                          Up to <span className="num">{Math.round(maxSec)}&nbsp;seconds</span>.{" "}
+                          {" "}and <span className="num">{Math.round(maxSec)}&nbsp;seconds</span>.{" "}
                         </>
                       ) : (
-                        "No length limit. "
+                        ", any length. "
                       ))}
+                    {maxSec === undefined && ". "}
                     Footage from this
                     fixed camera gives the most meaningful result &mdash; the geometric rules are tied
                     to its scene layout.
+                  </p>
+                  <p className="mt-2 max-w-md text-[11px] leading-relaxed text-faint">
+                    The camera&rsquo;s own files run at about 18&nbsp;MB per second, so a longer clip straight from it needs
+                    re-encoding first: <span className="num">{REENCODE_CMD}</span> fits two minutes in well under the limit.
                   </p>
                   <button
                     type="button"
@@ -502,6 +520,7 @@ export default function Demo() {
                     <Row k="Device" v={caps.gpu ?? caps.device} />
                     <Row k="Part A model" v={caps.detector} />
                     <Row k="Part B model" v={caps.risk_detector} />
+                    <Row k="Max upload" v={bytes(maxBytes)} />
                     <Row k="Max length" v={caps.max_duration_sec > 0 ? `${Math.round(caps.max_duration_sec)} s` : "no limit"} />
                     <Row k="Queue" v={`${caps.queue_depth} waiting`} />
                     <Row k="Classes" v={`${caps.classes.length} of 14`} />

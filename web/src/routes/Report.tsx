@@ -3,20 +3,27 @@ import { Callout, Panel, Section, Stat } from "../components/ui";
 import { LINKS } from "../content/links";
 import { loadData } from "../lib/api";
 import { IMPLEMENTED_CLASSES } from "../lib/classes";
-import type { Manifest, SampleData } from "../lib/types";
+import { timecode } from "../lib/format";
+import type { DevEval, Manifest, SampleData } from "../lib/types";
 
 export default function Report() {
   const [sample, setSample] = useState<SampleData | null>(null);
   const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [dev, setDev] = useState<DevEval | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
     void loadData<SampleData>("samples/C3905.json", ac.signal).then(setSample);
-    void loadData<Manifest>("manifest.json", ac.signal).then(setManifest);
+    void loadData<Manifest>("manifest.json", ac.signal).then((m) => {
+      setManifest(m);
+      if (m?.metrics.available && m.metrics.path) void loadData<DevEval>(m.metrics.path, ac.signal).then(setDev);
+    });
     return () => ac.abort();
   }, []);
 
   const rt = sample?.runtime;
+  const devClips = dev ? Object.keys(dev.videos).join(", ") : "";
+  const devAccidents = dev ? Object.values(dev.videos).flatMap((v) => v.accidents) : [];
 
   return (
     <div className="mx-auto max-w-[900px] space-y-12 px-4 py-10 sm:py-14">
@@ -116,9 +123,15 @@ export default function Report() {
           <p>
             The traffic flow field in <span className="num">configs/flow_field.npz</span> is derived
             from the organizers&rsquo; own sample clips and is the only data in the repository learned
-            from the competition footage. No footage is redistributed: the 4K originals are gitignored
-            and the site serves generated 720p proxies of the clips present in this checkout.
+            from the competition footage. The 4K originals are not in the repository; the site shows the
+            sample clips as 720p proxies and annotated renders, as the task&rsquo;s Results section asks.
           </p>
+          {dev && (
+            <p>
+              <span className="num">{dev.labels}</span> is our own annotation of {devClips} ({dev.n_gt} events,
+              task start/end conventions). It is used only to score the output, never to fit anything.
+            </p>
+          )}
         </Block>
 
         <Block n="5" title="Results">
@@ -139,13 +152,32 @@ export default function Report() {
                 <span className="num">evaluate.py --validate-only</span>) passes with no errors and no
                 warnings.
               </p>
-              <p>
-                <b>Accuracy is not measured.</b> The sample clips are unlabelled and we have not
-                annotated them, so there is no ground truth for{" "}
-                <span className="num">evaluate.py</span> and therefore no Score&nbsp;A, Score&nbsp;B,
-                per-class F1, AP or mTTA. We would rather publish that gap than a number we cannot
-                stand behind.
-              </p>
+              {dev ? (
+                <p>
+                  <b>
+                    Accuracy on our dev labels ({devClips}): Score&nbsp;A {dev.score_a.toFixed(3)}, Score&nbsp;B{" "}
+                    {dev.part_b ? dev.part_b.score_b.toFixed(3) : "undefined"}, model score {dev.model_score.toFixed(3)}.
+                  </b>{" "}
+                  Pooled F1 is {dev.micro["0.3"].toFixed(2)} at tIoU&nbsp;0.3 and {dev.micro["0.7"].toFixed(2)} at 0.7.{" "}
+                  {dev.classes.some((c) => c.mean === 1) && (
+                    <>
+                      <span className="num">{dev.classes.filter((c) => c.mean === 1).map((c) => c.id).join(", ")}</span> match
+                      at every threshold;{" "}
+                    </>
+                  )}
+                  <span className="num">{dev.classes.filter((c) => c.mean === 0).map((c) => c.id).join(", ")}</span> score
+                  zero. It is one clip, and footage the rules were tuned on, so it is a sanity check rather than an
+                  estimate of the hidden-set score.
+                </p>
+              ) : (
+                <p>
+                  <b>Accuracy is not measured.</b> The sample clips are unlabelled and we have not
+                  annotated them, so there is no ground truth for{" "}
+                  <span className="num">evaluate.py</span> and therefore no Score&nbsp;A, Score&nbsp;B,
+                  per-class F1, AP or mTTA. We would rather publish that gap than a number we cannot
+                  stand behind.
+                </p>
+              )}
             </>
           ) : (
             <p>No processed sample in this checkout, so there is no runtime to report.</p>
@@ -219,13 +251,22 @@ export default function Report() {
               {14 - IMPLEMENTED_CLASSES.length} of 14 classes are never emitted. Each one that occurs in
               the hidden set is a zero in the Score&nbsp;A class average.
             </li>
+            {dev ? (
+              <li>
+                Only {devClips} is labelled, and the thresholds were chosen by eye on the same four clips, so the
+                dev score is optimistic and cannot tell a mistuned threshold from a lucky one.
+              </li>
+            ) : (
+              <li>
+                No dev labels, so every threshold was chosen by eye on unlabelled footage. Some are
+                probably mistuned and we cannot currently tell which.
+              </li>
+            )}
             <li>
-              No dev labels, so every threshold was chosen by eye on unlabelled footage. Some are
-              probably mistuned and we cannot currently tell which.
-            </li>
-            <li>
-              Part&nbsp;B has never been observed firing on a real collision, because none of the
-              sample clips contains one. Its true-positive behaviour is untested.
+              Part&nbsp;B has never been observed firing on a confirmed collision.{" "}
+              {devAccidents.length > 0
+                ? `The one accident in our labels (${devClips} at ${devAccidents.map((a) => timecode(a.start)).join(", ")}) gets a risk of ${Math.max(...devAccidents.map((a) => a.peak_before)).toFixed(2)} in the 5 s before it, and on review we could not see contact there, so its true-positive behaviour is still untested.`
+                : "None of the sample clips contains one, so its true-positive behaviour is untested."}
             </li>
             <li>
               Everything geometric assumes this camera pose. The demo reports the SIFT inlier count so
@@ -240,12 +281,21 @@ export default function Report() {
 
         <Block n="9" title="What we would do next">
           <ol>
-            <li>
-              <b>Annotate the sample clips.</b> The tool is already built (
-              <span className="num">tools/labeler/index.html</span>). Everything else is guesswork
-              until Score&nbsp;A can be computed, and boundary tuning at IoU&nbsp;0.7 is where the
-              cheapest points are.
-            </li>
+            {dev ? (
+              <li>
+                <b>Label the other three clips and hold one out.</b> The tool is built (
+                <span className="num">tools/labeler/index.html</span>) and one clip is done; with a held-out clip
+                the dev score becomes an estimate, and boundary tuning at IoU&nbsp;0.7 is where the cheapest
+                points are.
+              </li>
+            ) : (
+              <li>
+                <b>Annotate the sample clips.</b> The tool is already built (
+                <span className="num">tools/labeler/index.html</span>). Everything else is guesswork
+                until Score&nbsp;A can be computed, and boundary tuning at IoU&nbsp;0.7 is where the
+                cheapest points are.
+              </li>
+            )}
             <li>
               <b>A clip classifier for accident and near_miss.</b> Trained on DoTA or CCD, applied only
               to windows the risk model already flags, so the cost stays negligible.
@@ -261,7 +311,9 @@ export default function Report() {
             <li>
               <b>Accuracy ablations.</b> Detector size, frame stride and tracking are already ablated
               for cost and agreement (<span className="num">tools/ablation.py</span>, on the Extra credit
-              page); which configuration is <em>more accurate</em> needs the labelled dev set first.
+              page){dev?.ablation
+                ? `, and scored against our labels on a ${dev.ablation.seconds.toFixed(0)} s window; ${dev.ablation.gt_events} labels are too few to pick a configuration, so this needs the rest of the dev set.`
+                : "; which configuration is more accurate needs the labelled dev set first."}
             </li>
           </ol>
         </Block>

@@ -471,14 +471,6 @@ def main() -> int:
         "source_commit": git_commit(),
         "samples": {},
         "eda": {},
-        "metrics": {
-            "available": False,
-            "reason": (
-                "No dev labels exist in this repository, so Score A, Score B, per-class F1, AP and "
-                "mTTA cannot be computed. evaluate.py needs a ground_truth.json; the sample clips "
-                "shipped unlabelled and have not been annotated yet."
-            ),
-        },
     }
 
     ref = ROOT / "configs" / "reference.jpg"
@@ -588,6 +580,14 @@ def main() -> int:
         # The hero replays whichever clip gave the tracker the most to hold on to.
         "hero_replay": max(replays, key=replays.get) if replays else None,
     }
+    # A sibling script, imported here rather than at the top: server/inference.py imports this
+    # module as scripts.build_site_data, where the scripts directory is not on sys.path.
+    from build_dev_eval import build as build_dev_eval, metrics_entry
+
+    dev = build_dev_eval()
+    if dev is not None:
+        write(OUT / "dev-eval.json", dev)
+    manifest["metrics"] = metrics_entry(dev)
     write(OUT / "manifest.json", manifest)
     print(f"done: {len(processed)}/{len(SAMPLES)} samples have real results")
     return 0

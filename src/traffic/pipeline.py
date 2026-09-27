@@ -96,8 +96,10 @@ class Pipeline:
         )
 
     def detect_events(self, video_path: str, classes: list[str] | None = None,
-                      cache_dir: Path | None = None) -> list[list]:
-        t0 = time.perf_counter()
+                      cache_dir: Path | None = None, started: float | None = None) -> list[list]:
+        """``started``: perf_counter() when the harness's clock for this video began, if earlier than now
+        (e.g. before the models were loaded); the Part A deadline is measured from it."""
+        t0 = time.perf_counter() if started is None else started
         info = probe(video_path)
         cache = cache_dir / f"{Path(video_path).name}.perception.npz" if cache_dir else None
         if cache is not None and cache.exists():

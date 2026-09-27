@@ -7,8 +7,9 @@ For each clip found it writes, into web/public/media/samples/:
   <stem>_poster.jpg      first-frame poster so the player does not start black
   <stem>_annotated.mp4   tools/render_video.py output, re-encoded for the web
 
-The annotated render needs cache/<name>.perception.npz (tools/cache_perception.py)
-and predictions_samples.json. Missing inputs are skipped and reported, never faked.
+The annotated render needs predictions_samples.json and either cache/<name>.perception.npz
+(tools/cache_perception.py) or, without it, the website's overlay web/public/data/overlay/<stem>.json,
+which holds the same tracks and evidence. Missing inputs are skipped and reported, never faked.
 """
 from __future__ import annotations
 
@@ -50,13 +51,21 @@ def make_poster(src: Path, dst: Path) -> None:
     ])
 
 
-def make_annotated(name: str, proxy: Path, dst: Path) -> None:
+def render_source(name: str) -> list[str] | None:
+    """render_video.py's source: the perception cache, else the website's overlay, else nothing."""
+    if (ROOT / "cache" / f"{name}.perception.npz").exists():
+        return []
+    overlay = ROOT / "web" / "public" / "data" / "overlay" / f"{Path(name).stem}.json"
+    return ["--overlay", str(overlay)] if overlay.exists() else None
+
+
+def make_annotated(name: str, proxy: Path, dst: Path, source: list[str]) -> None:
     raw = OUT / f"{Path(name).stem}_annotated_raw.mp4"
     env_path = f"{ROOT / 'src'}{';' if sys.platform == 'win32' else ':'}{ROOT / 'tools'}"
     subprocess.run(
         [sys.executable, str(ROOT / "tools" / "render_video.py"), name,
          "--proxy", str(proxy), "--pred", str(ROOT / "predictions_samples.json"),
-         "--out", str(raw), "--width", str(PROXY_WIDTH)],
+         "--out", str(raw), "--width", str(PROXY_WIDTH), *source],
         cwd=ROOT, check=True,
         env={**__import__("os").environ, "PYTHONPATH": env_path, "PYTHONIOENCODING": "utf-8"},
     )
@@ -100,12 +109,13 @@ def main() -> int:
             make_poster(proxy, poster)
         if args.skip_annotated:
             continue
-        if not (ROOT / "cache" / f"{src.name}.perception.npz").exists():
-            print(f"[{src.name}] skipping annotated render: no cached perception")
+        source = render_source(src.name)
+        if source is None:
+            print(f"[{src.name}] skipping annotated render: no cached perception and no overlay")
             continue
         if args.force or not annotated.exists():
             print(f"[{src.name}] annotated -> {annotated.name}", flush=True)
-            make_annotated(src.name, proxy, annotated)
+            make_annotated(src.name, proxy, annotated, source)
 
     for p in sorted(OUT.iterdir()):
         print(f"  {p.name}  {p.stat().st_size / 1e6:.1f} MB")

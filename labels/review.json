@@ -1,0 +1,9 @@
+[
+  {
+    "video": "C3905.MP4",
+    "start": 99.67,
+    "end": 101.67,
+    "label": "accident",
+    "note": "Not confirmed on re-watching the 720p proxy: a dark SUV turns past the traffic island and the parked truck with no visible contact. Kept in dev_labels.json as annotated; build_dev_eval.py also reports Score A without it."
+  }
+]

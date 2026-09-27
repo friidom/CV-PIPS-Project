@@ -69,10 +69,94 @@ export interface Manifest {
   source_commit: string;
   samples: Record<string, AssetState & { path?: string }>;
   eda: Record<string, AssetState & { path?: string }>;
-  metrics: AssetState;
+  /** Dev-set scores; `path` is dev-eval.json once labels/dev_labels.json exists. */
+  metrics: AssetState & { path?: string };
   summary?: ManifestSummary;
   /** Set when the event-dependent files were re-derived for newer rules without a new perception pass. */
   events_refresh?: { at: string; note: string };
+}
+
+/* ---------- one example frame per class (scripts/build_class_examples.py) ---------- */
+
+export interface ClassExample {
+  class: string;
+  clip: string;
+  start: number;
+  end: number;
+  /** Time of the frame shown, seconds into the clip. */
+  t: number;
+  /** Evidence boxes of this class in that frame. */
+  boxes: number;
+  /** The segment matches one of our dev labels. */
+  labelled: boolean;
+  image: string;
+}
+
+export interface ExamplesData {
+  source: string;
+  examples: ClassExample[];
+}
+
+/* ---------- dev-set evaluation (scripts/build_dev_eval.py) ---------- */
+
+/** [start, end, label, status at the timeline tIoU, best same-class tIoU]. */
+export type DevEvent = [number, number, string, "tp" | "fp" | "fn", number];
+
+export interface DevClass {
+  id: string;
+  gt: number;
+  pred: number;
+  /** F1 at tIoU 0.3, 0.5 and 0.7. */
+  f1: [number, number, number];
+  mean: number;
+  /** Counts at the timeline tIoU (0.5). */
+  tp: number;
+  fp: number;
+  fn: number;
+}
+
+export interface DevVideo {
+  file: string;
+  duration: number;
+  gt: DevEvent[];
+  pred: DevEvent[];
+  /** [label class or "(no label)", emitted class or "(missed)", count]. */
+  confusion: [string, string, number][];
+  accidents: { start: number; end: number; peak_before: number }[];
+}
+
+export interface DevEval {
+  generated_at: string;
+  labels: string;
+  status_tiou: number;
+  overlap_tiou: number;
+  n_gt: number;
+  n_pred: number;
+  model_score: number;
+  score_a: number;
+  micro: Record<string, number>;
+  class_agnostic: Record<string, number>;
+  classes: DevClass[];
+  part_b: {
+    score_b: number;
+    ap: number;
+    f1_alarm: number;
+    mtta_sec: number;
+    n_accidents: number;
+    n_alarms: number;
+    n_matched: number;
+    n_frames_scored: number;
+    n_frames_positive: number;
+  } | null;
+  disputed: { video: string; start: number; end: number; label: string; note: string }[];
+  score_a_undisputed: number | null;
+  videos: Record<string, DevVideo>;
+  ablation: {
+    video: string;
+    seconds: number;
+    gt_events: number;
+    runs: { id: string; score_a: number; f1_05: number }[];
+  } | null;
 }
 
 export interface FlowFieldData {
@@ -220,6 +304,8 @@ export interface ServerCapabilities {
   risk_detector: string;
   /** Longest accepted clip in seconds; 0 = no limit. */
   max_duration_sec: number;
+  /** Server-side size cap, when the server sets one; the public tunnel caps every request anyway. */
+  max_upload_bytes?: number;
   classes: string[];
   queue_depth: number;
 }

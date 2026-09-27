@@ -4,7 +4,7 @@ Traffic events from a fixed road camera: **detect** them as time segments
 (`[start_sec, end_sec, label]`) and, causally, **anticipate** accidents with a
 per-frame risk score.
 
-Team **wiut-cv**. Website: see [`web/`](web); it is deployed as one process (site +
+Team **PIPS**. Website: see [`web/`](web); it is deployed as one process (site +
 live-demo API on one origin) on a GPU server, following [`deploy/README.md`](deploy/README.md).
 
 ## What we run
@@ -17,6 +17,12 @@ python evaluate.py --pred predictions.json --gt ground_truth.json
 
 `solution.py` at the repo root exposes the required interface and delegates to
 `src/traffic`. Nothing else has to be installed or configured.
+
+`requirements.txt` pins `torch==2.14.0` / `torchvision==0.29.0` from PyTorch's CUDA 12.6
+index. The plain PyPI wheels of torch 2.14 are CUDA 13.0 builds that need an NVIDIA driver
+≥ 580 and fall back to the CPU, silently, on anything older; the cu126 build runs on any
+driver ≥ 525 and covers the T4-class evaluation GPU. Should CUDA still be missing, Part B
+switches itself off so that Part A stays inside the time budget.
 
 Measured over all four organizer clips (18.4 min of 3840×2160 at 29.97 fps, one RTX 5080):
 
@@ -94,18 +100,40 @@ No hosted or paid model is called at any stage of inference.
 
 ### Determinism
 
-`solution.py` seeds `random`, `numpy` and `torch` (`SEED = 1234`) at import. The
-only non-determinism is cuDNN autotuning, which does not change detector output.
-Two runs on the same machine produce the same `predictions.json`.
+`solution.py` seeds `random`, `numpy` and `torch` (`SEED = 1234`) at import and turns
+cuDNN autotuning off (`cudnn.benchmark = False`, `cudnn.deterministic = True`), so the
+convolution algorithms are the same on every run. Frames are decoded in three threads but
+keyed by frame index before tracking, and the tracker and rules are deterministic, so two
+runs on the same machine produce the same `predictions.json`.
 
 ## Results and limitations
 
-**Score A and Score B are not measured.** The sample clips shipped unlabelled and
-we have not annotated them, so `evaluate.py` has no ground truth and there is no
-F1, AP or mTTA to report. `tools/labeler/index.html` is the tool for producing
-those labels; what is missing is annotation time, not code.
+**Dev set: one clip.** We labelled `C3905` ourselves (20 events, the task's start/end
+conventions, `labels/dev_labels.json`, drawn with `tools/labeler/index.html`). Against it
+the official `evaluate.py` gives:
 
-Known problems, all visible in `predictions_samples.json` without any labels:
+| | Score A | Score B | model score | micro F1 @ tIoU 0.3 / 0.5 / 0.7 |
+|---|---|---|---|---|
+| `C3905`, `predictions_samples.json` | 0.343 | 0.000 | 0.240 | 0.48 / 0.38 / 0.24 |
+
+`stop_line` and `stopped_vehicle` match at every threshold; `accident`, `near_miss`
+(no detector), `wrong_way` and `illegal_u_turn` (rules that did not fire) score zero;
+`failure_to_yield` emits 8 segments with no label under them. The single `accident`
+label (01:39.7–01:41.7) did not hold up on review — no visible contact — and is listed in
+`labels/review.json`; without it Score A is 0.381 and Score B is undefined. One clip, and
+footage the rules were tuned on, makes this a sanity check rather than an estimate:
+
+```bash
+python tools/eval_dev.py labels/dev_labels.json predictions_samples.json   # per-class P / R / F1
+python scripts/build_dev_eval.py    # the same scores, plus per-event matches, for the website
+```
+
+Both restrict the predictions to the labelled clip first. Handing `evaluate.py` all four
+clips' predictions against these labels gives 0.286 instead: it ignores the unlabelled
+videos for matching, but the classes predicted only there (`red_light`, `illegal_turn`)
+still join the class average, as zeros.
+
+Known problems, all visible in `predictions_samples.json`:
 
 - `stopped_vehicle` segments span most of a clip — a parked car the rule cannot
   distinguish from a stopped one;
@@ -159,12 +187,16 @@ python tools/cache_perception.py --videos samples
 # re-run only the rules against that cache
 python tools/predict_cached.py --out predictions_dev.json
 
-# score against your own labels once they exist
-python tools/eval_dev.py ../dev_labels.json predictions_dev.json
+# score against the dev labels
+python tools/eval_dev.py labels/dev_labels.json predictions_dev.json
 
 # annotated review video (tracks, phase, evidence, timeline)
 python tools/render_video.py C3905.MP4 --proxy <720p proxy> \
     --pred predictions_samples.json --out renders/C3905_annotated.mp4
+# the same without cache/: tracks and evidence from the website's overlay data
+python tools/render_video.py C3905.MP4 --proxy web/public/media/samples/C3905_720p.mp4 \
+    --pred predictions_samples.json --overlay web/public/data/overlay/C3905.json \
+    --out renders/C3905_annotated.mp4
 
 # pipeline / efficiency ablation: detector A vs B, frame rate, tracking on/off
 # (measured runtime, detections, tracks, events; agreement between runs, not accuracy)
@@ -177,10 +209,13 @@ python -m pytest tests/ -q
 
 ```bash
 # 1. regenerate the site's data and media from whatever is in this checkout
-python run_submission.py --videos samples --out predictions_samples.json --team wiut-cv
+python run_submission.py --videos samples --out predictions_samples.json --team pips
 python scripts/build_media.py --videos samples        # proxies, posters, annotated renders
 python scripts/build_site_data.py                     # web/public/data/*.json
 python scripts/build_event_facts.py                   # events.json: evidence tracks + scene region per event
+python scripts/build_dev_eval.py                      # dev-eval.json: evaluate.py on labels/dev_labels.json
+python scripts/build_lighting.py                      # eda/lighting.json: brightness of every clip over time
+python scripts/build_class_examples.py                # one example frame per detected class
 
 # 2. the live-demo backend (imports src/traffic directly; uses the GPU if present)
 pip install -r server/requirements.txt
@@ -227,9 +262,9 @@ explicit "not available" card in its place.
 
 | member | role | who did what | links |
 |---|---|---|---|
-| _name — to fill in_ | _role_ | _what they built, in one or two sentences_ | [GitHub](#) · [LinkedIn](#) · [portfolio](#) |
-| _name — to fill in_ | _role_ | _what they built, in one or two sentences_ | [GitHub](#) · [LinkedIn](#) · [portfolio](#) |
-| _name — to fill in_ | _role_ | _what they built, in one or two sentences_ | [GitHub](#) · [LinkedIn](#) · [portfolio](#) |
+| Plaxov Ilya (U2410060) | model and pipeline | the technical side of the model: detection, tracking, scene alignment, the event rules and the Part B risk model, and fitting the pipeline into the time budget | [GitHub](https://github.com/nasik666) · [LinkedIn](https://www.linkedin.com/in/ilya-plaxov-312452359/) |
+| Aminjonov Kamoliddin (U2410032) | website and live demo | the website, its charts and the live demo, and their deployment with the inference server on the GPU host | [GitHub](https://github.com/friidom) · [LinkedIn](https://www.linkedin.com/in/kamoliddin-aminjonov-829547359) |
+| Sunnat (U2410052) | research and evaluation | everything outside the model and the website: information gathering, the dev-set labels, checking the submission end to end, the documentation | [LinkedIn](https://uz.linkedin.com/in/sunnat-begiev-40ba1643a) |
 
-The website's Team page renders the same information, plus each member's previous
-projects, from `web/src/content/team.ts`; keep the two in sync.
+The website's Team page renders the same information from `web/src/content/team.ts`;
+keep the two in sync.
